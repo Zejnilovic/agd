@@ -16,6 +16,9 @@ BASH = "/bin/bash" if sys.platform == "darwin" else "bash"
 
 GIT_ENV = {
     **os.environ,
+    # Ignore the user's and the system's git settings, such as signed tags.
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_AUTHOR_NAME": "Test",
     "GIT_AUTHOR_EMAIL": "test@example.com",
     "GIT_COMMITTER_NAME": "Test",
@@ -486,6 +489,45 @@ class AgdSourceTest(AgdCase):
         self.assertIn(f"file team {self.DEV} ", self.lock())
         self.assertNotIn(f"file agentic-defaults {self.DEV} ", self.lock())
         self.assertIn("Nothing to do", self.agd("status").stdout)
+
+    def team_developer(self):
+        return self.team({self.DEV: "---\nname: developer\ndescription: Team developer.\n---\n\nTeam rules.\n"},
+                         "root .\n\npack devs requires agentic-defaults:core\n  .claude/agents/developer.md\n")
+
+    def test_replacing_a_changed_file_asks_first(self):
+        self.init()
+        write(self.project, self.DEV, self.read(self.DEV).replace("model: haiku", "model: opus"))
+        write(self.project, ".agd-ignore", f"agentic-defaults:{self.DEV}\n")
+        changed, before, team = self.read(self.DEV), self.lock(), self.team_developer()
+
+        result = self.agd("init", str(team))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(self.DEV, result.stdout + result.stderr)
+        self.assertIn("--yes", result.stderr)
+        self.assertEqual((self.read(self.DEV), self.lock()), (changed, before))
+
+        result = self.agd_answering("n", "init", str(team))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.read(self.DEV), self.lock()), (changed, before))
+
+        result = self.agd("init", str(team), "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Team rules.", self.read(self.DEV))
+        self.assertIn(f"file team {self.DEV} ", self.lock())
+        self.assertNotIn(f"file agentic-defaults {self.DEV} ", self.lock())
+
+    def test_a_file_given_away_after_an_update_is_replaced_after_asking(self):
+        self.init()
+        write(self.project, self.DEV, self.read(self.DEV).replace("Developer rules.", "Our rules."))
+        write(self.project, ".agd-ignore", f"agentic-defaults:{self.DEV}\n")
+        self.assertEqual(self.agd("update").returncode, 0)
+        self.assertNotIn(f" {self.DEV} ", self.lock())
+        team = self.team_developer()
+        self.assertEqual(self.agd("init", str(team)).returncode, 2)
+        result = self.agd("init", str(team), "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Team rules.", self.read(self.DEV))
+        self.assertIn(f"file team {self.DEV} ", self.lock())
 
     def test_a_second_source_with_the_same_name_is_refused(self):
         self.init()
@@ -974,6 +1016,25 @@ class AgdUpdateTest(AgdCase):
         self.assertIn("agd add vue", self.status())
         self.update()
         self.assertFalse((self.project / ".claude/skills/vue").exists())
+
+    VUE = {".claude/skills/vue/SKILL.md": "---\nname: vue\ndescription: Vue.\n---\n"}
+    VUE_PACK = "\npack vue requires core\n  .claude/skills/vue/\n"
+
+    def test_a_pack_whose_files_were_in_the_installed_release_is_not_new(self):
+        # A release without packs.txt is one pack, core: react's files were in it, vue's weren't.
+        self.release("1.1.0", packs=False)
+        write(self.project, ".agd-ignore", ".claude/agents/react-developer.md\n.claude/skills/react/*\n")
+        self.init()
+        self.release("1.2.0", self.VUE, packs=self.PACKS + self.VUE_PACK)
+        status = self.status()
+        self.assertNotIn("pack     react", status)
+        self.assertIn("agd add vue", status)
+
+    def test_a_new_pack_whose_files_are_all_ignored_is_not_mentioned(self):
+        self.init()
+        write(self.project, ".agd-ignore", ".claude/skills/vue/*\n")
+        self.release("1.1.0", self.VUE, packs=self.PACKS + self.VUE_PACK)
+        self.assertNotIn("vue", self.status())
 
 
 class AgdResolveTest(AgdCase):

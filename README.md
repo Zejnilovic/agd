@@ -42,7 +42,7 @@ Files agd didn't install are never touched.
 
 | Command | Does |
 |---|---|
-| `agd init [<source>][@<version>\|@<commit>] [--with <packs>]` | Installs a source: a GitHub `owner/repo`, a git URL or a local folder. In a project that is set up, adds another source. |
+| `agd init [<source>][@<version>\|@<commit>] [--with <packs>] [--yes]` | Installs a source: a GitHub `owner/repo`, a git URL or a local folder. In a project that is set up, adds another source, and asks before it replaces a file you changed. |
 | `agd adopt [@<version>]` | Starts managing a copy of agentic-defaults made by hand or by its old `sync.sh`, without changing a file. |
 | `agd status [--check]` | Shows what `agd update` would do. `--check` exits 1 when an update is due, for CI. |
 | `agd update [--to <version>\|<commit>]` | Updates every source to its latest release, or to the given one. |
@@ -56,6 +56,10 @@ Files agd didn't install are never touched.
 
 - `.agd.lock`: written by agd. It records each source, its version, the packs and every installed file. Commit it, so the team gets the same files.
 - `.agd-ignore`: written by you. One path or pattern per line keeps it out of every source; `<source>:<path>` keeps it out of one source, which also decides between two sources that ship the same path.
+
+## Publish your own setup
+
+Any git repository with release tags can be a source: your team's agents and skills, alone or on top of agentic-defaults. [Publish your own agentic setup](docs/sources.md) covers the layout, `packs.txt`, releases, and what projects may change.
 
 ## License
 

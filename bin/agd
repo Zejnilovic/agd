@@ -3,7 +3,7 @@
 # Works with bash 3.2 (macOS) and Git Bash (Windows), and needs only git and POSIX tools.
 #
 # Usage: agd [-C <dir>] [--offline] <command>
-#   init [<source>][@<version>|@<commit>] [--with <pack>,...]
+#   init [<source>][@<version>|@<commit>] [--with <pack>,...] [--yes]
 #                             install every pack of the latest release of agentic-defaults, or of
 #                             <source>: a GitHub owner/repo, a git URL or a local folder. @ picks a
 #                             release or a commit. --with installs only the named packs and the
@@ -33,7 +33,7 @@
 # (default ~/.cache/agd).
 
 set -u
-version=0.1.0
+version=0.1.1
 default_name=agentic-defaults
 default_url=${AGD_SOURCE:-https://github.com/Zejnilovic/agentic-defaults.git}
 cache_root=${AGD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/agd}
@@ -86,7 +86,7 @@ project=$(cd "$dir" && pwd)
 [ -z "$with" ] || [ "$command" = init ] || die "--with works only with init"
 [ -z "$to" ] || [ "$command" = update ] || die "--to works only with update"
 [ "$check" = 0 ] || [ "$command" = status ] || die "--check works only with status"
-[ "$yes" = 0 ] || [ "$command" = reset ] || die "--yes works only with reset"
+[ "$yes" = 0 ] || [ "$command" = reset ] || [ "$command" = init ] || die "--yes works only with init and reset"
 
 tmp=$(mktemp -d) || die "can't create a temporary folder"
 trap 'rm -rf "$tmp"' EXIT
@@ -329,11 +329,18 @@ examine() { # <name> <installed version> <target version> <cache>
     awk 'FILENAME == ARGV[1] { have[$1] = 1; next } ($4 in have) { print $1 }' "$tmp/locked" "$tmp/target.files"
   } | LC_ALL=C sort -u >"$tmp/wanted"
   awk '$1 == "pack" { print $2 }' "$tmp/target.packs" | LC_ALL=C sort >"$tmp/target.names"
-  awk '$1 == "pack" { print $2 }' "$tmp/base.packs" | LC_ALL=C sort >"$tmp/base.names"
   with_requirements "$tmp/target.packs" $(LC_ALL=C comm -12 "$tmp/wanted" "$tmp/target.names") >"$tmp/selected"
   LC_ALL=C comm -23 "$tmp/wanted" "$tmp/target.names" | sed 's/^/gonepack /' >>"$tmp/actions"
-  LC_ALL=C comm -23 "$tmp/target.names" "$tmp/base.names" | LC_ALL=C comm -23 - "$tmp/selected" \
-    | sed 's/^/newpack /' >>"$tmp/actions"
+  # A pack is new when none of its files were in the installed release (a release without packs.txt is
+  # one pack, core, with every file), and it is worth mentioning unless the project ignores all its files.
+  awk '{ print $4 }' "$tmp/base.files" | LC_ALL=C sort >"$tmp/base.paths"
+  LC_ALL=C comm -23 "$tmp/target.names" "$tmp/selected" | while read -r pack; do
+    awk -v p="$pack" '$1 == p { print $4 }' "$tmp/target.files" | LC_ALL=C sort >"$tmp/pack.paths"
+    [ -z "$(LC_ALL=C comm -12 "$tmp/pack.paths" "$tmp/base.paths")" ] || continue
+    while read -r path; do
+      is_ignored "$path" "$name" || { echo "newpack $pack"; break; }
+    done <"$tmp/pack.paths"
+  done >>"$tmp/actions"
   awk 'FILENAME == ARGV[1] { selected[$1] = 1; next } ($1 in selected) { print $4, $2, $3 }' \
     "$tmp/selected" "$tmp/target.files" >"$tmp/target.selected"
 
@@ -564,10 +571,12 @@ cmd_init() {
   check_needs "$tmp/new.packs" $wanted
 
   # Decide every path before writing anything. A path another source installed is a conflict, unless
-  # the ignore file drops it for one of the two.
-  local added=0 taken=0 ignored=0 replaced=0
+  # the ignore file drops it for one of the two. Replacing a file with project changes, or one the ignore
+  # file took away from another source, asks first.
+  local added=0 taken=0 ignored=0 replaced=0 answer giver
   : >"$tmp/plan"
   : >"$tmp/conflicts"
+  : >"$tmp/asks"
   while read -r pack mode sha path; do
     printf '%s\n' "$wanted" | grep -qx -- "$pack" || continue
     if is_ignored "$path" "$name"; then ignored=$((ignored + 1)); continue; fi
@@ -580,11 +589,20 @@ cmd_init() {
       fi
       owner_url=$(awk -v s="$owner" '$1 == "source" && $2 == s { print $3 }' "$tmp/lock.sources")
       untouched "$path" "$owner_sha" "$(cache_of "$owner_url")" \
-        || die "$path has your changes, so $name can't replace $owner's copy: agd reset $path first, or keep $owner's with $name:$path in $ignore_file"
+        || echo "replace  $path (your copy from $owner has changes)" >>"$tmp/asks"
       echo "replace $mode $sha $path $owner" >>"$tmp/plan"
     elif [ -e "$project/$path" ]; then
-      echo "taken    $path (a project file has this path; not installed)"
-      taken=$((taken + 1))
+      # A file another source used to manage, until the ignore file gave the path away.
+      giver=$(awk '$1 == "source" { print $2 }' "$tmp/lock.sources" | while read -r other; do
+        if is_ignored "$path" "$other"; then echo "$other"; break; fi
+      done)
+      if [ -n "$giver" ]; then
+        echo "replace  $path (once $giver's; $ignore_file gives it to $name)" >>"$tmp/asks"
+        echo "replace $mode $sha $path $giver" >>"$tmp/plan"
+      else
+        echo "taken    $path (a project file has this path; not installed)"
+        taken=$((taken + 1))
+      fi
     else
       echo "install $mode $sha $path" >>"$tmp/plan"
     fi
@@ -596,6 +614,19 @@ cmd_init() {
       echo "Choose one source for each path with a line in $ignore_file, then run agd init again."
     } >&2
     exit 2
+  fi
+  if [ -s "$tmp/asks" ]; then
+    cat "$tmp/asks"
+    if [ "$yes" = 0 ]; then
+      [ -t 0 ] || die "installing $name would replace the files above: confirm in a terminal, or run it with --yes"
+      printf 'Replace %s with %s'"'"'s? Their changes are lost, unless git has them. [y/N] ' \
+        "$(count "$(grep -c . "$tmp/asks")" file)" "$name"
+      read -r answer || answer=""
+      case "$answer" in
+        y|Y|yes|Yes|YES) ;;
+        *) echo "Nothing installed."; return 0 ;;
+      esac
+    fi
   fi
 
   while read -r kind mode sha path owner; do
