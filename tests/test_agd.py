@@ -11,6 +11,7 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 AGD = REPO / "bin/agd"
+INSTALL = REPO / "install.sh"
 # macOS ships bash 3.2 as /bin/bash; agd must keep working with it.
 BASH = "/bin/bash" if sys.platform == "darwin" else "bash"
 
@@ -113,6 +114,98 @@ class ReleaseTest(unittest.TestCase):
             write(self.root, "agd.rb", formula)
             check = run(["ruby", "-c", "agd.rb"], self.root)
             self.assertEqual(check.returncode, 0, check.stderr)
+
+
+class InstallTest(unittest.TestCase):
+    """install.sh against a temporary agd repository, without network."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = pathlib.Path(self._tmp.name)
+        self.repo, self.home = base / "agd", base / "home"
+        self.repo.mkdir()
+        self.home.mkdir()
+        run(["git", "init", "-q", "-b", "main"], self.repo)
+        self.env = {k: v for k, v in GIT_ENV.items() if k != "AGD_INSTALL_DIR"}
+        # install.sh fetches https://github.com/Zejnilovic/agd.git; make that the temporary repository.
+        self.env.update({"HOME": str(self.home), "GIT_CONFIG_COUNT": "1",
+                         "GIT_CONFIG_KEY_0": f"url.file://{self.repo}.insteadOf",
+                         "GIT_CONFIG_VALUE_0": "https://github.com/Zejnilovic/agd.git"})
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def release(self, version, tag=None):
+        write(self.repo, "bin/agd", f'#!/usr/bin/env bash\nversion={version}\n'
+                                    f'[ "${{1:-}}" = --version ] && echo "agd $version"\n')
+        run(["git", "add", "-A"], self.repo)
+        self.assertEqual(run(["git", "commit", "-q", "-m", version], self.repo).returncode, 0)
+        run(["git", "tag", tag or f"v{version}"], self.repo)
+
+    def install(self, *args, piped=False):
+        """Runs install.sh, or pipes it into bash the way curl ... | bash does."""
+        if piped:
+            return subprocess.run([BASH, "-s", "--", *args], input=INSTALL.read_text(), env=self.env,
+                                  capture_output=True, text=True)
+        return subprocess.run([BASH, str(INSTALL), *args], env=self.env, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True)
+
+    def installed(self, folder):
+        agd = pathlib.Path(folder) / "agd"
+        self.assertTrue(os.access(agd, os.X_OK), agd)
+        return subprocess.run([BASH, str(agd), "--version"], capture_output=True, text=True).stdout.strip()
+
+    def test_script_has_no_syntax_errors(self):
+        result = subprocess.run([BASH, "-n", str(INSTALL)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_piped_install_takes_the_latest_release_into_local_bin_and_says_how_to_reach_it(self):
+        self.release("0.1.0")
+        self.release("0.2.0")
+        self.release("0.3.0", tag="v0.3.0-rc.1")
+        result = self.install(piped=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(self.installed(self.home / ".local/bin"), "agd 0.2.0")
+        self.assertIn("Installed agd 0.2.0", result.stdout)
+        self.assertIn('export PATH="$HOME/.local/bin:$PATH"', result.stdout)
+
+    def test_installs_a_given_release_then_updates_it(self):
+        self.release("0.1.0")
+        self.release("0.2.0")
+        folder = self.home / "tools"
+        self.env["PATH"] = f"{folder}:{self.env['PATH']}"
+        result = self.install("--version", "0.1.0", "--dir", str(folder))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed(folder), "agd 0.1.0")
+        self.assertNotIn("export PATH", result.stdout)
+        result = self.install("--dir", str(folder))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed(folder), "agd 0.2.0")
+        self.assertIn("Replaced agd 0.1.0 with 0.2.0", result.stdout)
+        result = self.install("--dir", str(folder))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("agd 0.2.0 is already installed", result.stdout)
+
+    def test_unknown_release_is_refused_and_nothing_is_written(self):
+        self.release("0.1.0")
+        self.release("0.2.0")
+        result = self.install("--version", "9.9.9")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("9.9.9", result.stderr)
+        self.assertIn("0.1.0 0.2.0", result.stderr)
+        self.assertFalse((self.home / ".local").exists())
+
+    def test_install_dir_from_the_environment_and_a_note_when_another_agd_comes_first(self):
+        self.release("0.1.0")
+        first, folder = self.home / "first", self.home / "tools"
+        write(first, "agd", "#!/usr/bin/env bash\necho other\n")
+        (first / "agd").chmod(0o755)
+        self.env.update({"AGD_INSTALL_DIR": str(folder), "PATH": f"{first}:{folder}:{self.env['PATH']}"})
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed(folder), "agd 0.1.0")
+        self.assertIn(f"{first}/agd comes first", result.stdout)
 
 
 class AgdCase(unittest.TestCase):
@@ -261,6 +354,7 @@ class AgdInitTest(AgdCase):
         result = self.agd("init")
         self.assertEqual(result.returncode, 2)
         self.assertIn("99.0.0", result.stderr)
+        self.assertIn("https://zejnilovic.github.io/agd/install/", result.stderr)
         self.assertEqual(list(self.project.iterdir()), [])
 
     def test_init_refuses_a_project_that_is_set_up(self):
@@ -325,7 +419,7 @@ class AgdInitTest(AgdCase):
         self.assertEqual(result.stdout.strip(), "agd " + (REPO / "VERSION").read_text().strip())
         result = self.agd("--help")
         self.assertEqual(result.returncode, 0)
-        for command in ("init", "status", "--offline", "-C"):
+        for command in ("init", "status", "--offline", "-C", "https://zejnilovic.github.io/agd"):
             self.assertIn(command, result.stdout)
 
     def test_unknown_command_points_to_help(self):

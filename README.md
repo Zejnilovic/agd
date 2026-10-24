@@ -1,8 +1,62 @@
-# agd
+<p align="center">
+  <a href="https://zejnilovic.github.io/agd/"><img src="docs/assets/logo.svg" alt="" width="72" height="72"></a>
+</p>
 
-Install, update and combine agentic setups (instructions, agents, skills, hooks) in a project, from git repositories. The default setup is [agentic-defaults](https://github.com/Zejnilovic/agentic-defaults); any repository laid out as a source works, and several can share a project.
+<h1 align="center">agd</h1>
 
-agd copies files into your project and records them in `.agd.lock`, which you commit. Updates keep what belongs to the project, and never overwrite a file you changed.
+<p align="center">
+  <strong>Your agentic setup, versioned like a dependency.</strong><br>
+  Install and update instructions, agents, skills and hooks from git repositories,<br>
+  without overwriting what your project changed.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Zejnilovic/agd/actions/workflows/check.yml"><img src="https://github.com/Zejnilovic/agd/actions/workflows/check.yml/badge.svg" alt="Check agd"></a>
+  <a href="https://github.com/Zejnilovic/agd/releases/latest"><img src="https://img.shields.io/github/v/release/Zejnilovic/agd?sort=semver&color=d33122" alt="Latest release"></a>
+  <a href="https://zejnilovic.github.io/agd/"><img src="https://img.shields.io/badge/docs-zejnilovic.github.io%2Fagd-123a69" alt="Documentation"></a>
+  <img src="https://img.shields.io/badge/needs-bash%203.2%2B%20and%20git-123a69" alt="Needs bash 3.2+ and git">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Zejnilovic/agd?color=123a69" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <a href="https://zejnilovic.github.io/agd/">Docs</a> ·
+  <a href="https://zejnilovic.github.io/agd/install/">Install</a> ·
+  <a href="https://zejnilovic.github.io/agd/quick-start/">Quick start</a> ·
+  <a href="https://zejnilovic.github.io/agd/concepts/">How it works</a> ·
+  <a href="docs/sources.md">Publish your own setup</a>
+</p>
+
+---
+
+A good agentic setup takes work: `AGENTS.md`, agents for each role, skills, hooks. You want it in every project, and you want every project to get its improvements. Copies drift, and copying a new version over an old one wipes out what each project changed, so nobody updates.
+
+agd keeps a setup in a git repository, installs it into your projects at a version, and updates it while keeping each project's own changes. The default setup is [agentic-defaults](https://github.com/Zejnilovic/agentic-defaults); any repository laid out as a source works, and several can share a project.
+
+```console
+$ agd init @0.2.0
+Installed agentic-defaults 0.2.0: 36 files from the packs core.
+Commit .agd.lock along with the new files.
+
+$ agd status        # weeks later: you chose opus for the reviewer, and edited a skill
+agentic-defaults 0.2.0 is installed, and 0.3.0 is available: run agd update.
+notes    https://github.com/Zejnilovic/agentic-defaults/releases/tag/v0.3.0
+update   .claude/agents/analyst.md
+...
+model    .claude/agents/reviewer.md: opus (kit: sonnet)
+edited   .claude/skills/tdd/SKILL.md, newer version available: see agd diff .claude/skills/tdd/SKILL.md, then agd merge or agd reset it
+...
+
+$ agd update
+...
+agentic-defaults is at 0.3.0: 30 updated, 1 added, 0 removed.
+Review the changes with git diff, and commit .agd.lock with them.
+```
+
+- **Versioned.** Sources publish releases as git tags. A project installs one, records it in `.agd.lock`, and updates with one command, with links to the release notes.
+- **Plain files in your repository.** Your agents read them as they are, people review them in pull requests. No plugin, no runtime, any assistant: Claude Code, GitHub Copilot, Cursor, Codex and others.
+- **Never overwrites your work.** Updates keep an agent's `model:` and `tools:` lines and a `## This project` section. A file you changed elsewhere is left alone and reported, and `agd diff`, `agd merge` and `agd reset` settle it.
+- **Composable.** Install only the packs you need, and stack your team's setup on top of agentic-defaults.
+- **Small enough to trust.** One bash script that needs only git. It never runs code from a source.
 
 ## Install
 
@@ -10,7 +64,13 @@ agd copies files into your project and records them in `.agd.lock`, which you co
 brew install zejnilovic/tap/agd
 ```
 
-Without Homebrew, clone this repository and run `bin/agd`, or put it on your `PATH`. It needs only bash (3.2 or newer, or Git Bash on Windows) and git.
+Without Homebrew, on macOS, Linux, WSL or Git Bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Zejnilovic/agd/main/install.sh | bash
+```
+
+The [install script](install.sh) puts the latest release in `~/.local/bin`; run it again to update. You can also download [`agd`](https://github.com/Zejnilovic/agd/releases/latest/download/agd) from the latest release, make it executable and put it on your `PATH`, or run `bin/agd` from a clone. [Install](https://zejnilovic.github.io/agd/install/) has every way, with checksums and Windows notes.
 
 ## Quick start
 
@@ -22,44 +82,34 @@ agd status                             # what an update would do
 agd update                             # move to the latest release
 ```
 
-## What stays yours
-
-Updates replace installed files, but keep three parts that belong to the project:
-
-- an agent's `model:` line, so you can choose another model,
-- an agent's `tools:` line, to limit what it may use,
-- a `## This project` section at the end of a Markdown file, for your own additions.
-
-A file you changed anywhere else is left alone. `agd status` shows it as edited, and as having a newer version when the source changed it too. Then:
-
-- `agd diff <path>` shows your changes and the source's,
-- `agd merge <path>` merges the source's changes into yours,
-- `agd reset <path>` takes the source's version and drops every project change. `agd reset` does that for every installed file, and keeps only the "This project" section of `AGENTS.md`.
-
-Files agd didn't install are never touched.
+Commit `.agd.lock` with the files, so your team gets the same setup. The [quick start](https://zejnilovic.github.io/agd/quick-start/) walks through a first install, making files your own and a first update.
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `agd init [<source>][@<version>\|@<commit>] [--with <packs>] [--yes]` | Installs a source: a GitHub `owner/repo`, a git URL or a local folder. In a project that is set up, adds another source, and asks before it replaces a file you changed. |
+| `agd init [<source>][@<version>\|@<commit>] [--with <packs>] [--yes]` | Installs a source: a GitHub `owner/repo`, a git URL or a local folder. In a project that is set up, adds another source. |
 | `agd adopt [@<version>]` | Starts managing a copy of agentic-defaults made by hand or by its old `sync.sh`, without changing a file. |
 | `agd status [--check]` | Shows what `agd update` would do. `--check` exits 1 when an update is due, for CI. |
 | `agd update [--to <version>\|<commit>]` | Updates every source to its latest release, or to the given one. |
 | `agd add <pack>`, `agd remove <pack>` | Installs or removes a pack. Removing keeps the files you changed, as yours. |
-| `agd diff`, `agd merge`, `agd reset` | Settle a file you changed, as above. |
+| `agd diff`, `agd merge`, `agd reset` | Settle a file you changed: see both changes, merge the source's into yours, or take the source's file. |
 | `agd source list`, `agd source remove <name>` | List or remove sources. |
 
-`-C <dir>` works in another folder, and `--offline` uses the cached copy of each source instead of fetching it. `agd --help` lists everything.
+`-C <dir>` works in another folder, and `--offline` uses the cached copy of each source. `agd --help` lists everything, and [the reference](https://zejnilovic.github.io/agd/reference/commands/) has the details.
 
-## Files in your project
+## Learn more
 
-- `.agd.lock`: written by agd. It records each source, its version, the packs and every installed file. Commit it, so the team gets the same files.
-- `.agd-ignore`: written by you. One path or pattern per line keeps it out of every source; `<source>:<path>` keeps it out of one source, which also decides between two sources that ship the same path.
+- [How agd works](https://zejnilovic.github.io/agd/concepts/): the idea, the words it uses, and what an update does to each file.
+- [Make installed files your own](https://zejnilovic.github.io/agd/guides/your-changes/): project parts, edits, and settling them.
+- [Keep it up to date](https://zejnilovic.github.io/agd/guides/updates/), with a weekly check in CI.
+- [Combine sources](https://zejnilovic.github.io/agd/guides/combine-sources/): your team's setup on top of agentic-defaults.
+- [Publish your own agentic setup](docs/sources.md): the layout, `packs.txt`, releases.
+- [FAQ](https://zejnilovic.github.io/agd/faq/)
 
-## Publish your own setup
+## Contributing
 
-Any git repository with release tags can be a source: your team's agents and skills, alone or on top of agentic-defaults. [Publish your own agentic setup](docs/sources.md) covers the layout, `packs.txt`, releases, and what projects may change.
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how agd is built and tested, and [CHANGELOG.md](CHANGELOG.md) what's coming in the next release.
 
 ## License
 

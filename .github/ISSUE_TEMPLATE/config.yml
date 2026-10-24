@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://zejnilovic.github.io/agd/
+    about: Install, the quick start, guides and the command reference.
+  - name: FAQ and common messages
+    url: https://zejnilovic.github.io/agd/faq/
+    about: What agd's messages mean, and what to do next.
+  - name: A problem with agentic-defaults itself
+    url: https://github.com/Zejnilovic/agentic-defaults/issues
+    about: Its agents, skills and instructions are maintained there.

@@ -15,6 +15,14 @@ agd is one bash script, `bin/agd`, that installs and updates agentic setups from
 - Only git and POSIX tools. Detect optional tools with `command -v`.
 - agd never runs code from a source. It only copies files.
 - Read-only commands (`status`, `diff`, `source list`) write nothing in the project. Commands that delete a project's text (`reset`) ask first, and need `--yes` without a terminal.
+- `install.sh` follows the same rules. Its tests fake GitHub too.
+
+## Docs
+
+- The site, https://zejnilovic.github.io/agd, is built from `docs/` and `mkdocs.yml` by the Docs workflow on every push to `main`. `README.md` is its short version.
+- Change the docs with the behavior, in the same commit. Show real output: run the commands rather than writing it by hand.
+- `mkdocs build --strict` must pass (`pip install -r docs/requirements.txt`); it fails on a broken link.
+- People copy these into their scripts, so keep them working: the install script's URL, `https://raw.githubusercontent.com/Zejnilovic/agd/main/install.sh`, and the release files `agd` and `SHA256SUMS` under `releases/latest/download/`.
 
 ## Contracts
 
@@ -28,4 +36,4 @@ Projects and sources depend on these. Changing one needs a major version, and a 
 
 - `VERSION` and the `version=` line in `bin/agd` always match; `bash scripts/bump.sh <version>` sets both and adds an "(unreleased)" entry to `CHANGELOG.md`. Replace its TODO with what changed.
 - A source's `min-agd` names the oldest agd that can install it. Release agd before a source that needs the new version.
-- To release: push everything to `main`, then run the **Release** workflow (Actions tab, or `gh workflow run release.yml`), first with `-f dry_run=true`. It dates the changelog entry (`scripts/release.sh`), tags `v<version>`, creates the GitHub release with `agd-<version>.tar.gz`, writes `Formula/agd.rb` in `Zejnilovic/homebrew-tap` (`scripts/formula.sh`, pushed with the `HOMEBREW_TAP_TOKEN` secret), and then installs and tests it from the tap on macOS. Don't release by hand.
+- To release: push everything to `main`, then run the **Release** workflow (Actions tab, or `gh workflow run release.yml`), first with `-f dry_run=true`. It dates the changelog entry (`scripts/release.sh`), tags `v<version>`, creates the GitHub release with `agd-<version>.tar.gz`, the plain `agd` and their `SHA256SUMS`, writes `Formula/agd.rb` in `Zejnilovic/homebrew-tap` (`scripts/formula.sh`, pushed with the `HOMEBREW_TAP_TOKEN` secret), and then installs the release from the tap on macOS, and with `install.sh` and the plain download on Linux, macOS and Windows. Don't release by hand.

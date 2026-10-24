@@ -31,9 +31,11 @@
 #
 # Environment: AGD_SOURCE replaces the default source URL, and AGD_CACHE the cache folder
 # (default ~/.cache/agd).
+#
+# Docs: https://zejnilovic.github.io/agd
 
 set -u
-version=0.1.1
+version=0.1.2
 default_name=agentic-defaults
 default_url=${AGD_SOURCE:-https://github.com/Zejnilovic/agentic-defaults.git}
 cache_root=${AGD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/agd}
@@ -209,7 +211,7 @@ load() { # <cache> <version> <name>
     "$out.packs" "$out.blobs" >"$out.files"
   min=$(awk '$1 == "min" { print $2 }' "$out.packs")
   if [ -n "$min" ] && newer "$min" "$version"; then
-    die "release $v needs agd $min or newer, and this is agd $version: upgrade agd, for example with brew upgrade agd"
+    die "release $v needs agd $min or newer, and this is agd $version: upgrade agd with brew upgrade agd, or as https://zejnilovic.github.io/agd/install/ says"
   fi
 }
 

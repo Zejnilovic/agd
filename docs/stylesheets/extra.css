@@ -1,0 +1,1153 @@
+/* agd's site is an engineering drawing. The source is the master print; the project's parts are
+   red-pencil markup that survives every revision. Light is a whiteprint (blue lines on vellum),
+   dark a blueprint (white lines on Prussian blue). Red marks only what belongs to the project,
+   yellow only edits. The landing page (overrides/home.html) uses the agd-* classes. */
+
+[data-md-color-scheme="default"] {
+  --agd-sheet: #f1f4f3;
+  --agd-panel: #e3eaee;
+  --agd-ink: #0f2f5c;
+  --agd-ink-2: #4a6489;
+  --agd-line: #1d4f8f;
+  --agd-grid: rgba(29, 79, 143, 0.055);
+  --agd-grid-major: rgba(29, 79, 143, 0.11);
+  --agd-red: #d33122;
+  --agd-yellow: #e2a400;
+  --agd-yellow-ink: #7d5a00;
+  --agd-link: #1d5fbf;
+  --agd-header: #f1f4f3;
+  --agd-header-ink: #0f2f5c;
+  --agd-drop: rgba(29, 79, 143, 0.16);
+
+  --md-default-bg-color: var(--agd-sheet);
+  --md-default-fg-color: rgba(15, 47, 92, 0.92);
+  --md-default-fg-color--light: rgba(15, 47, 92, 0.66);
+  --md-default-fg-color--lighter: rgba(15, 47, 92, 0.34);
+  --md-default-fg-color--lightest: rgba(15, 47, 92, 0.08);
+  --md-primary-fg-color: var(--agd-header);
+  --md-primary-fg-color--light: #e3eaee;
+  --md-primary-fg-color--dark: #dde5ea;
+  --md-primary-bg-color: var(--agd-header-ink);
+  --md-primary-bg-color--light: rgba(15, 47, 92, 0.62);
+  --md-accent-fg-color: #1d5fbf;
+  --md-accent-fg-color--transparent: rgba(29, 95, 191, 0.1);
+  --md-typeset-a-color: var(--agd-link);
+  --md-code-bg-color: var(--agd-panel);
+  --md-code-fg-color: #12325f;
+  --md-typeset-table-color: rgba(29, 79, 143, 0.18);
+  --md-footer-bg-color: #0f2f5c;
+  --md-footer-bg-color--dark: #0a2342;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 214;
+  --agd-sheet: #10335e;
+  --agd-panel: #0b2747;
+  --agd-ink: #e6efff;
+  --agd-ink-2: #a5bddf;
+  --agd-line: #cfe0ff;
+  --agd-grid: rgba(200, 225, 255, 0.055);
+  --agd-grid-major: rgba(200, 225, 255, 0.11);
+  --agd-red: #ff6f5c;
+  --agd-yellow: #ffd24a;
+  --agd-yellow-ink: #ffd24a;
+  --agd-link: #8fd6ff;
+  --agd-header: #0a2342;
+  --agd-header-ink: #e6efff;
+  --agd-drop: rgba(2, 12, 30, 0.45);
+
+  --md-default-bg-color: var(--agd-sheet);
+  --md-default-fg-color: rgba(230, 239, 255, 0.92);
+  --md-default-fg-color--light: rgba(230, 239, 255, 0.68);
+  --md-default-fg-color--lighter: rgba(230, 239, 255, 0.36);
+  --md-default-fg-color--lightest: rgba(230, 239, 255, 0.1);
+  --md-default-bg-color--light: rgba(16, 51, 94, 0.7);
+  --md-primary-fg-color: var(--agd-header);
+  --md-primary-fg-color--light: #0e2c52;
+  --md-primary-fg-color--dark: #061830;
+  --md-primary-bg-color: var(--agd-header-ink);
+  --md-primary-bg-color--light: rgba(230, 239, 255, 0.66);
+  --md-accent-fg-color: #8fd6ff;
+  --md-accent-fg-color--transparent: rgba(143, 214, 255, 0.12);
+  --md-typeset-a-color: var(--agd-link);
+  --md-code-bg-color: var(--agd-panel);
+  --md-code-fg-color: #dbe8ff;
+  --md-typeset-table-color: rgba(200, 225, 255, 0.2);
+  --md-footer-bg-color: #0a2342;
+  --md-footer-bg-color--dark: #061830;
+}
+
+/* The blue band and the terminal look the same in both schemes. */
+:root {
+  --agd-band: #123a69;
+  --agd-band-ink: #eaf2ff;
+  --agd-band-ink-2: #a9c1e3;
+  --agd-band-line: #cfe0ff;
+  --agd-band-red: #ff6f5c;
+  --agd-term: #071a33;
+  --agd-display: "Sofia Sans Extra Condensed", "Arial Narrow", sans-serif;
+  --agd-label: "B612 Mono", var(--md-code-font-family);
+  --agd-hand: "Architects Daughter", cursive;
+}
+[data-md-color-scheme="slate"] {
+  --agd-band: #0a2342;
+}
+
+/* ---------- Drafting paper and the theme ---------- */
+
+body {
+  background-color: var(--agd-sheet);
+  background-image:
+    linear-gradient(var(--agd-grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--agd-grid-major) 1px, transparent 1px),
+    linear-gradient(var(--agd-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--agd-grid) 1px, transparent 1px);
+  background-size: 5rem 5rem, 5rem 5rem, 1rem 1rem, 1rem 1rem;
+}
+.md-main,
+.md-container {
+  background: transparent;
+}
+
+/* The header is the drawing's top strip, with a ruler along its edge. */
+.md-header,
+.md-header--shadow {
+  box-shadow: none;
+}
+.md-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0.4rem;
+  background:
+    repeating-linear-gradient(90deg, var(--md-primary-bg-color) 0 1px, transparent 1px 0.5rem) bottom / 100% 0.2rem no-repeat,
+    repeating-linear-gradient(90deg, var(--md-primary-bg-color) 0 1px, transparent 1px 2.5rem) bottom / 100% 0.4rem no-repeat,
+    linear-gradient(var(--md-primary-bg-color), var(--md-primary-bg-color)) bottom / 100% 1px no-repeat;
+  opacity: 0.45;
+  pointer-events: none;
+}
+.md-header__topic:first-child {
+  font-family: var(--agd-display);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.md-search__form {
+  border: 1px solid var(--md-primary-bg-color--light);
+  border-radius: 0;
+  background-color: var(--md-default-fg-color--lightest);
+}
+[data-md-toggle="search"]:checked ~ .md-header .md-search__form {
+  border-color: transparent;
+}
+.md-source__facts {
+  font-family: var(--agd-label);
+}
+
+/* Type */
+.md-typeset {
+  font-size: 0.78rem;
+}
+.md-typeset h1,
+.md-typeset h2 {
+  font-family: var(--agd-display);
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--agd-ink);
+}
+.md-typeset h1 {
+  margin-bottom: 1.2em;
+  padding-bottom: 0.2em;
+  border-bottom: 4px double var(--agd-line);
+  font-size: 2.6em;
+  line-height: 1;
+  letter-spacing: 0.005em;
+}
+.md-typeset h2 {
+  font-size: 1.6em;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+}
+.md-typeset h3 {
+  font-weight: 700;
+  color: var(--agd-ink);
+}
+.md-typeset dt {
+  font-weight: 700;
+}
+.md-typeset a {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+.md-typeset .headerlink,
+.md-typeset .md-button {
+  text-decoration: none;
+}
+.md-typeset code {
+  border-radius: 0;
+}
+.md-typeset pre > code,
+.md-typeset .highlight {
+  border-radius: 0;
+}
+.md-typeset .highlight pre,
+.md-typeset pre {
+  border-left: 2px solid var(--agd-line);
+}
+.md-typeset table:not([class]) {
+  border: 1px solid var(--agd-line);
+  border-radius: 0;
+  background: var(--agd-sheet);
+}
+.md-typeset table:not([class]) th {
+  font-family: var(--agd-label);
+  font-size: 0.62rem;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--agd-line);
+}
+.md-typeset .tabbed-labels > label {
+  font-family: var(--agd-label);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.md-typeset .tabbed-labels > label:hover {
+  color: var(--agd-link);
+}
+.md-typeset .tabbed-set > input:checked + label,
+.md-typeset .tabbed-labels > label.tabbed-labels__active {
+  color: var(--agd-ink);
+}
+.md-typeset .tabbed-labels::before {
+  background: var(--agd-red);
+}
+.md-typeset .md-button {
+  border-radius: 0;
+  border-color: var(--agd-ink);
+  color: var(--agd-ink);
+  font-family: var(--agd-label);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.md-typeset .md-button--primary {
+  background-color: var(--agd-ink);
+  color: var(--agd-sheet);
+}
+.md-typeset .md-button:hover,
+.md-typeset .md-button:focus {
+  background-color: var(--agd-link);
+  border-color: var(--agd-link);
+  color: var(--agd-sheet);
+}
+
+/* Navigation: section labels like a drawing's index, the current page in red pencil. */
+.md-nav__item--section > .md-nav__link,
+.md-nav--secondary > .md-nav__title,
+.md-nav__title {
+  font-family: var(--agd-label);
+  font-size: 0.6rem;
+  font-weight: 400 !important;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.md-nav__link--active,
+.md-nav__item .md-nav__link--active {
+  color: var(--agd-red);
+}
+.md-nav__link:hover,
+.md-nav__link:focus {
+  color: var(--agd-link);
+}
+
+/* Mermaid diagrams, drawn in the sheet's lines. */
+:root {
+  --md-mermaid-font-family: var(--md-text-font-family);
+}
+[data-md-color-scheme] {
+  --md-mermaid-node-bg-color: var(--agd-panel);
+  --md-mermaid-node-fg-color: var(--agd-ink);
+  --md-mermaid-edge-color: var(--agd-line);
+  --md-mermaid-label-bg-color: var(--agd-sheet);
+  --md-mermaid-label-fg-color: var(--agd-ink);
+}
+
+.md-footer-meta,
+.md-footer {
+  font-family: var(--agd-label);
+}
+
+/* ---------- The landing page ---------- */
+
+.agd-home {
+  color: var(--agd-ink);
+}
+.agd-wrap {
+  max-width: 61rem;
+  margin: 0 auto;
+  padding: 0 1.2rem;
+}
+.agd-label,
+.agd-kicker {
+  font-family: var(--agd-label);
+  font-size: 0.56rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.agd-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 1rem;
+  color: var(--agd-ink-2);
+}
+.agd-kicker::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.4;
+}
+.agd-home code {
+  font-family: var(--md-code-font-family);
+  font-size: 0.88em;
+}
+.agd-home h2 {
+  margin: 0 0 1rem;
+  font-family: var(--agd-display);
+  font-size: clamp(1.7rem, 3.4vw, 2.6rem);
+  font-weight: 800;
+  line-height: 0.95;
+  text-transform: uppercase;
+  color: var(--agd-ink);
+}
+.agd-hand {
+  font-family: var(--agd-hand);
+  color: var(--agd-red);
+}
+.agd-home a:not(.agd-button) {
+  color: var(--agd-link);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+/* The sheet: a drawing frame with zone markers and a title block. */
+.agd-hero {
+  padding: 2rem 0 2.6rem;
+}
+.agd-frame {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  grid-template-rows: 1rem auto;
+  border: 2px solid var(--agd-line);
+  background: var(--agd-sheet);
+  box-shadow: 0.5rem 0.5rem 0 var(--agd-drop);
+}
+.agd-zones {
+  display: flex;
+  font-family: var(--agd-label);
+  font-size: 0.45rem;
+  color: var(--agd-ink-2);
+}
+.agd-zones span {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  border-color: var(--agd-line);
+  border-style: solid;
+  border-width: 0;
+}
+.agd-zones--top {
+  grid-column: 2;
+  border-bottom: 1px solid var(--agd-line);
+}
+.agd-zones--top span + span {
+  border-left-width: 1px;
+}
+.agd-zones--side {
+  grid-row: 2;
+  flex-direction: column;
+  border-right: 1px solid var(--agd-line);
+}
+.agd-zones--side span + span {
+  border-top-width: 1px;
+}
+.agd-corner {
+  border-right: 1px solid var(--agd-line);
+  border-bottom: 1px solid var(--agd-line);
+}
+.agd-sheet {
+  grid-column: 2;
+  grid-row: 2;
+  padding: 2.2rem 2rem 0;
+  min-width: 0;
+}
+.agd-hero__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2.4rem;
+  align-items: start;
+}
+@media screen and (min-width: 60em) {
+  .agd-hero__grid {
+    grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  }
+}
+.agd-hero__title {
+  margin: 0;
+  font-family: var(--agd-display);
+  font-size: clamp(2.4rem, 5vw, 4rem);
+  text-wrap: balance;
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: -0.005em;
+  text-transform: uppercase;
+  color: var(--agd-ink);
+}
+.agd-circled {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+}
+.agd-circled svg {
+  position: absolute;
+  left: -7%;
+  top: -20%;
+  width: 114%;
+  height: 140%;
+  overflow: visible;
+  pointer-events: none;
+}
+.agd-circled path {
+  fill: none;
+  stroke: var(--agd-red);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: agd-draw 0.9s cubic-bezier(0.6, 0.05, 0.3, 1) 0.9s forwards;
+}
+.agd-hero__note {
+  display: block;
+  margin: 0.5rem 0 1.4rem 34%;
+  font-size: 0.95rem;
+  line-height: 1.2;
+  transform: rotate(-3deg);
+  opacity: 0;
+  animation: agd-fade 0.5s ease-out 1.7s forwards;
+}
+.agd-hero__lede {
+  max-width: 30em;
+  margin: 0 0 1.5rem;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--agd-ink-2);
+}
+.agd-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+.agd-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.1rem;
+  border: 1.5px solid var(--agd-ink);
+  font-family: var(--agd-label);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--agd-ink);
+  transition: background-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.agd-button:hover,
+.agd-button:focus-visible {
+  color: var(--agd-ink);
+  box-shadow: 0.25rem 0.25rem 0 var(--agd-drop);
+  transform: translate(-0.1rem, -0.1rem);
+}
+.agd-button--primary {
+  background: var(--agd-ink);
+  color: var(--agd-sheet);
+}
+.agd-button--primary:hover,
+.agd-button--primary:focus-visible {
+  color: var(--agd-sheet);
+}
+.agd-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px dashed var(--agd-line);
+  background: var(--agd-panel);
+  color: var(--agd-ink);
+  font-size: 0.66rem;
+  cursor: pointer;
+}
+.agd-copy:hover,
+.agd-copy:focus-visible {
+  border-style: solid;
+}
+.agd-copy code {
+  overflow: hidden;
+  padding: 0;
+  background: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agd-copy__prompt {
+  font-family: var(--md-code-font-family);
+  color: var(--agd-red);
+}
+.agd-copy__hint::after {
+  content: "copy";
+  font-family: var(--agd-label);
+  font-size: 0.5rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--agd-ink-2);
+}
+.agd-copy.is-copied .agd-copy__hint::after {
+  content: "copied";
+  color: var(--agd-red);
+}
+.agd-hero__more {
+  margin: 0.8rem 0 0;
+  font-size: 0.66rem;
+  color: var(--agd-ink-2);
+}
+
+/* Detail A: the terminal, dark navy in both schemes. */
+.agd-detail {
+  margin: 0;
+}
+.agd-detail__label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+  color: var(--agd-ink-2);
+}
+.agd-bubble {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1.5px solid var(--agd-line);
+  border-radius: 50%;
+  font-family: var(--agd-display);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: var(--agd-ink);
+}
+.agd-term {
+  position: relative;
+  border: 1.5px solid var(--agd-line);
+  background: var(--agd-term);
+  box-shadow: 0.5rem 0.5rem 0 var(--agd-drop);
+}
+.agd-term__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0.8rem;
+  border-bottom: 1px solid rgba(200, 225, 255, 0.14);
+}
+.agd-term__bar i {
+  width: 0.45rem;
+  height: 0.45rem;
+  border: 1px solid rgba(200, 225, 255, 0.4);
+  border-radius: 50%;
+}
+.agd-term__bar span {
+  margin-left: 0.5rem;
+  font-family: var(--md-code-font-family);
+  font-size: 0.55rem;
+  color: #7f97bd;
+}
+.agd-term__screen {
+  margin: 0;
+  padding: 0.9rem 1rem 1.1rem;
+  min-height: 21rem;
+  white-space: normal;
+  font-family: var(--md-code-font-family);
+  font-size: 0.53rem;
+  line-height: 1.7;
+  color: #dbe8ff;
+}
+.agd-term__screen .l {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  animation: agd-line 0.3s ease-out forwards;
+  animation-delay: var(--t);
+}
+.agd-term__screen .c {
+  margin-top: 0.35rem;
+  color: #fff;
+}
+.agd-term__screen .c:first-child {
+  margin-top: 0;
+}
+.agd-term__screen .c b {
+  color: #ff6f5c;
+}
+.agd-term__screen .m {
+  color: #7f97bd;
+}
+.agd-term__screen .type {
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: bottom;
+  animation: agd-type 0.5s steps(var(--n)) forwards;
+  animation-delay: var(--t);
+}
+.agd-term__screen em {
+  font-style: normal;
+}
+.agd-term__screen .k-notes { color: #7f97bd; }
+.agd-term__screen .k-update { color: #8fd6ff; }
+.agd-term__screen .k-model { color: #ff8a7a; }
+.agd-term__screen .k-edited { color: #ffd24a; }
+.agd-term__screen .k-new { color: #8ee6c4; }
+.agd-term__screen .cursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.1em;
+  vertical-align: text-bottom;
+  background: #dbe8ff;
+  animation: agd-blink 1.1s steps(1) infinite;
+}
+
+/* The sheet's foot: what reads it, and the title block. */
+.agd-sheet__foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.6rem;
+  align-items: end;
+  margin: 1.8rem -2rem 0 0;
+}
+@media screen and (min-width: 60em) {
+  .agd-sheet__foot {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+.agd-works {
+  margin: 0 0 1.4rem;
+  font-size: 0.64rem;
+  color: var(--agd-ink-2);
+}
+.agd-works span {
+  display: inline-block;
+  margin: 0.25rem 0.2rem 0 0;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--agd-line);
+  font-family: var(--agd-label);
+  font-size: 0.55rem;
+  letter-spacing: 0.04em;
+  color: var(--agd-ink);
+}
+.agd-titleblock {
+  border-collapse: collapse;
+  min-width: 22rem;
+  font-family: var(--agd-label);
+  font-size: 0.55rem;
+  color: var(--agd-ink);
+}
+.agd-titleblock th,
+.agd-titleblock td {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--agd-line);
+  text-align: left;
+  vertical-align: top;
+}
+.agd-titleblock tr:last-child th,
+.agd-titleblock tr:last-child td {
+  border-bottom: 0;
+}
+.agd-titleblock tr > :last-child {
+  border-right: 0;
+}
+.agd-titleblock th {
+  width: 1%;
+  white-space: nowrap;
+  font-weight: 400;
+  font-size: 0.45rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--agd-ink-2);
+}
+.agd-titleblock strong {
+  font-family: var(--agd-display);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.agd-titleblock a {
+  color: var(--agd-link);
+}
+
+/* General notes: the why, on a blue band in both schemes. */
+.agd-section {
+  padding: 3.6rem 0;
+}
+.agd-notes {
+  background-color: var(--agd-band);
+  background-image:
+    linear-gradient(rgba(200, 225, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(200, 225, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(rgba(200, 225, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(200, 225, 255, 0.05) 1px, transparent 1px);
+  background-size: 5rem 5rem, 5rem 5rem, 1rem 1rem, 1rem 1rem;
+  color: var(--agd-band-ink);
+  border-block: 2px solid var(--agd-band-line);
+}
+.agd-notes .agd-kicker {
+  color: var(--agd-band-ink-2);
+}
+.agd-notes__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: note;
+}
+.agd-notes__list li {
+  display: grid;
+  grid-template-columns: 2.2rem minmax(0, 1fr);
+  margin: 0 0 0.7rem;
+  font-family: var(--agd-label);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  counter-increment: note;
+}
+.agd-notes__list li::before {
+  content: counter(note) ".";
+  color: var(--agd-band-red);
+}
+.agd-notes__answer {
+  max-width: 24em;
+  margin: 2.4rem 0 0;
+  font-family: var(--agd-display);
+  font-size: clamp(1.6rem, 3.6vw, 2.6rem);
+  font-weight: 700;
+  line-height: 1.02;
+  text-transform: uppercase;
+}
+.agd-redline {
+  padding-bottom: 0.12em;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 8'%3E%3Cpath d='M0 5 Q 5 1 10 4.5 T 20 4 T 30 5 T 40 4' fill='none' stroke='%23ff6f5c' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") bottom left / 2.2rem 0.32em repeat-x;
+  color: #fff;
+}
+
+/* Section A-A: one installed file. */
+.agd-anatomy__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2.6rem;
+  align-items: center;
+}
+@media screen and (min-width: 60em) {
+  .agd-anatomy__grid {
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  }
+}
+.agd-anatomy__text > p:not(.agd-kicker) {
+  margin: 0 0 1.4rem;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  color: var(--agd-ink-2);
+}
+.agd-legend {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agd-legend li {
+  display: grid;
+  grid-template-columns: 2.2rem minmax(0, 1fr);
+  gap: 0.6rem;
+  margin: 0 0 1rem;
+}
+.agd-legend p {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  color: var(--agd-ink-2);
+}
+.agd-legend strong {
+  color: var(--agd-ink);
+}
+.agd-swatch {
+  width: 2.2rem;
+  height: 1.3rem;
+}
+.agd-swatch--source {
+  border: 1.5px solid var(--agd-line);
+}
+.agd-swatch--yours {
+  border-left: 3px solid var(--agd-red);
+  background: repeating-linear-gradient(135deg, var(--agd-red) 0 1px, transparent 1px 6px);
+  opacity: 0.85;
+}
+.agd-swatch--edit {
+  overflow: visible;
+}
+.agd-swatch--edit path {
+  fill: none;
+  stroke: var(--agd-yellow);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+.agd-swatch--edit text {
+  font-family: var(--agd-display);
+  font-size: 9px;
+  font-weight: 800;
+  fill: var(--agd-yellow-ink);
+}
+
+.agd-file {
+  position: relative;
+  margin: 0;
+  border: 1.5px solid var(--agd-line);
+  background: var(--agd-sheet);
+  box-shadow: 0.5rem 0.5rem 0 var(--agd-drop);
+}
+.agd-file figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1.5px solid var(--agd-line);
+  font-family: var(--md-code-font-family);
+  font-size: 0.56rem;
+  color: var(--agd-ink-2);
+}
+.agd-file__lock {
+  color: var(--agd-ink);
+}
+.agd-file pre {
+  margin: 0;
+  padding: 0.6rem 0;
+  overflow-x: auto;
+  white-space: normal;
+  font-family: var(--md-code-font-family);
+  font-size: 0.58rem;
+  line-height: 1.75;
+}
+.agd-file .r {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  padding: 0.25rem 8.5rem 0.25rem 1rem;
+  border-left: 3px solid transparent;
+  white-space: pre;
+  color: var(--agd-ink-2);
+}
+.agd-file .r--yours {
+  border-left-color: var(--agd-red);
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--agd-red) 22%, transparent) 0 1px, transparent 1px 7px);
+  color: var(--agd-ink);
+  font-weight: 600;
+}
+.agd-file .tag {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.9rem;
+  font-family: var(--agd-label);
+  font-size: 0.45rem;
+  letter-spacing: 0.14em;
+  line-height: 1.75rem;
+  text-transform: uppercase;
+  color: var(--agd-ink-2);
+}
+.agd-file .r--yours .tag {
+  font-family: var(--agd-hand);
+  font-size: 0.82rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.6rem;
+  text-transform: none;
+  color: var(--agd-red);
+  transform: rotate(-4deg);
+}
+
+/* Parts list: what you get, as a drawing's bill of materials. */
+.agd-bom {
+  width: 100%;
+  border-collapse: collapse;
+  border: 2px solid var(--agd-line);
+  background: var(--agd-sheet);
+  font-size: 0.72rem;
+}
+.agd-bom th,
+.agd-bom td {
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--agd-line);
+  text-align: left;
+  vertical-align: top;
+}
+.agd-bom thead th {
+  padding: 0.45rem 0.9rem;
+  border-bottom-width: 2px;
+  font-family: var(--agd-label);
+  font-size: 0.5rem;
+  font-weight: 400;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--agd-ink-2);
+}
+.agd-bom td:first-child {
+  width: 1%;
+  text-align: center;
+}
+.agd-balloon {
+  display: inline-grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 1.5px solid var(--agd-line);
+  border-radius: 50%;
+  font-family: var(--agd-display);
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: var(--agd-ink);
+}
+.agd-bom h3 {
+  margin: 0 0 0.3rem;
+  font-family: var(--agd-display);
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: var(--agd-ink);
+}
+.agd-bom p {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--agd-ink-2);
+}
+.agd-bom td:last-child {
+  width: 26%;
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
+  color: var(--agd-ink);
+}
+.agd-bom tbody tr {
+  transition: background-color 0.15s;
+}
+.agd-bom tbody tr:hover {
+  background: var(--agd-panel);
+}
+.agd-bom a {
+  color: var(--agd-link);
+}
+@media screen and (max-width: 44.9375em) {
+  .agd-bom thead {
+    display: none;
+  }
+  .agd-bom,
+  .agd-bom tbody,
+  .agd-bom tr,
+  .agd-bom td {
+    display: block;
+    width: auto !important;
+  }
+  .agd-bom tr {
+    display: grid;
+    grid-template-columns: 2.6rem minmax(0, 1fr);
+    border-bottom: 1px solid var(--agd-line);
+  }
+  .agd-bom td {
+    border: 0;
+  }
+  .agd-bom td:first-child {
+    grid-row: span 2;
+  }
+  .agd-bom td:last-child {
+    padding-top: 0;
+  }
+}
+
+/* Assembly sequence, with dimension lines. */
+.agd-steps {
+  padding-top: 0;
+}
+.agd-steps__list {
+  display: grid;
+  gap: 1.6rem 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+@media screen and (min-width: 45em) {
+  .agd-steps__list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.agd-steps__list li {
+  margin: 0;
+  padding-right: 1.2rem;
+}
+.agd-dim {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  height: 1.2rem;
+  margin: 0 0 0.9rem;
+  border-inline: 1px solid var(--agd-line);
+}
+.agd-steps__list li + li .agd-dim {
+  border-left: 0;
+}
+.agd-dim::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid var(--agd-line);
+}
+.agd-dim b {
+  position: absolute;
+  top: calc(50% - 0.2rem);
+  width: 0.5rem;
+  height: 0.4rem;
+  background: var(--agd-line);
+}
+.agd-dim b:first-child {
+  left: 0;
+  clip-path: polygon(0 50%, 100% 0, 100% 100%);
+}
+.agd-dim b:last-child {
+  right: 0;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+.agd-dim span {
+  position: relative;
+  align-self: center;
+  padding: 0 0.4rem;
+  background: var(--agd-sheet);
+  font-family: var(--agd-label);
+  font-size: 0.5rem;
+  letter-spacing: 0.14em;
+  color: var(--agd-ink-2);
+}
+.agd-steps__list h3 {
+  margin: 0 0 0.4rem;
+  font-family: var(--agd-display);
+  font-size: 1.15rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--agd-ink);
+}
+.agd-steps__list p {
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.6;
+  color: var(--agd-ink-2);
+}
+
+/* The install section, from docs/index.md, lines up with the sections above. */
+.agd-home-content {
+  margin: 0 0.4rem;
+}
+.agd-home-content h2 {
+  font-size: clamp(1.7rem, 3.4vw, 2.4rem);
+  line-height: 0.95;
+}
+.agd-home-content > h2:first-child {
+  margin-top: 0;
+}
+
+/* Phones: a lighter frame. */
+@media screen and (max-width: 44.9375em) {
+  .agd-hero {
+    padding-top: 1rem;
+  }
+  .agd-frame {
+    grid-template-columns: 0 minmax(0, 1fr);
+    box-shadow: 0.3rem 0.3rem 0 var(--agd-drop);
+  }
+  .agd-zones--side,
+  .agd-corner {
+    display: none;
+  }
+  .agd-zones--top span:nth-child(n + 5) {
+    display: none;
+  }
+  .agd-sheet {
+    padding: 1.4rem 1rem 0;
+  }
+  .agd-sheet__foot {
+    margin-right: -1rem;
+  }
+  .agd-titleblock {
+    min-width: 0;
+    width: calc(100% + 1rem);
+    margin-left: -1rem;
+  }
+  .agd-hero__note {
+    margin-left: 18%;
+  }
+}
+
+/* Motion: the sheet is drawn once, then holds still. */
+.agd-rise {
+  animation: agd-rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: var(--t);
+}
+@keyframes agd-rise {
+  from { opacity: 0; transform: translateY(0.6rem); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes agd-fade {
+  to { opacity: 1; }
+}
+@keyframes agd-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes agd-line {
+  from { opacity: 0; transform: translateY(0.2rem); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes agd-type {
+  to { width: calc(var(--n) * 1ch); }
+}
+@keyframes agd-blink {
+  50% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agd-rise,
+  .agd-hero__note,
+  .agd-term__screen .l,
+  .agd-term__screen .type,
+  .agd-circled path {
+    animation: none;
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+  .agd-term__screen .type {
+    width: auto;
+  }
+}

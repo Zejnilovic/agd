@@ -1,0 +1,203 @@
+{% extends "main.html" %}
+
+{#- The landing page, drawn as an engineering sheet. Its sections are here; the install section
+    below them is docs/index.md. -#}
+
+{% block hero %}
+<div class="agd-home">
+
+  <section class="agd-hero">
+    <div class="agd-wrap">
+      <div class="agd-frame agd-rise" style="--t:0s">
+        <div class="agd-corner" aria-hidden="true"></div>
+        <div class="agd-zones agd-zones--top" aria-hidden="true">
+          <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span>
+        </div>
+        <div class="agd-zones agd-zones--side" aria-hidden="true">
+          <span>A</span><span>B</span><span>C</span><span>D</span>
+        </div>
+
+        <div class="agd-sheet">
+          <div class="agd-hero__grid">
+            <div class="agd-hero__text">
+              <p class="agd-kicker agd-rise" style="--t:.1s">Dwg agd-001 · agentic setups</p>
+              <h1 class="agd-hero__title agd-rise" style="--t:.18s">
+                Your agentic setup,
+                <span class="agd-circled">versioned<svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true"><path pathLength="1" vector-effect="non-scaling-stroke" d="M 9 27 C 4 14, 30 3, 55 3 C 82 3, 99 11, 97 22 C 95 33, 72 39, 47 38 C 22 37, 3 31, 5 20 C 7 12, 22 6, 40 4"/></svg></span>
+                like a dependency.
+              </h1>
+              <span class="agd-hand agd-hero__note">↖ pinned in the lock file, updated when you say so</span>
+              <p class="agd-hero__lede agd-rise" style="--t:.3s">
+                agd installs instructions, agents, skills and hooks from git repositories into your projects,
+                and updates them without overwriting what you changed.
+              </p>
+              <div class="agd-hero__actions agd-rise" style="--t:.4s">
+                <a class="agd-button agd-button--primary" href="{{ 'quick-start/' | url }}">Get started <span aria-hidden="true">→</span></a>
+                <a class="agd-button" href="{{ 'concepts/' | url }}">How it works</a>
+              </div>
+              <button class="agd-copy agd-rise" style="--t:.5s" type="button" data-copy="brew install zejnilovic/tap/agd"
+                      onclick="navigator.clipboard.writeText(this.dataset.copy).then(() => { this.classList.add('is-copied'); setTimeout(() => this.classList.remove('is-copied'), 1600) })"
+                      title="Copy to clipboard">
+                <span class="agd-copy__prompt" aria-hidden="true">$</span>
+                <code>brew install zejnilovic/tap/agd</code>
+                <span class="agd-copy__hint" aria-hidden="true"></span>
+              </button>
+              <p class="agd-hero__more agd-rise" style="--t:.55s">
+                No Homebrew? <a href="{{ 'install/' | url }}">Use the install script, or one download</a>.
+              </p>
+            </div>
+
+            <figure class="agd-detail agd-rise" style="--t:.25s" aria-label="A terminal session with agd">
+              <div class="agd-detail__label agd-label"><span class="agd-bubble" aria-hidden="true">A</span> Detail A · a session with agd</div>
+              <div class="agd-term">
+                <div class="agd-term__bar" aria-hidden="true"><i></i><i></i><i></i><span>~/work/shop</span></div>
+<pre class="agd-term__screen"><span class="l c" style="--t:.6s;--n:15"><b>$</b> <span class="type">agd init @0.2.0</span></span>
+<span class="l" style="--t:1.3s">Installed agentic-defaults 0.2.0: 36 files from the packs core.</span>
+<span class="l" style="--t:1.4s">Commit .agd.lock along with the new files.</span>
+<span class="l m" style="--t:1.9s"># Weeks later: you chose opus for the reviewer, and edited a skill.</span>
+<span class="l c" style="--t:2.5s;--n:10"><b>$</b> <span class="type">agd status</span></span>
+<span class="l" style="--t:3.1s">agentic-defaults 0.2.0 is installed, and 0.3.0 is available: run agd update.</span>
+<span class="l" style="--t:3.2s"><em class="k-notes">notes</em>    https://github.com/Zejnilovic/agentic-defaults/releases/tag/v0.3.0</span>
+<span class="l" style="--t:3.3s"><em class="k-update">update</em>   .claude/agents/analyst.md</span>
+<span class="l m" style="--t:3.35s">…</span>
+<span class="l" style="--t:3.4s"><em class="k-model">model</em>    .claude/agents/reviewer.md: opus (kit: sonnet)</span>
+<span class="l" style="--t:3.5s"><em class="k-edited">edited</em>   .claude/skills/tdd/SKILL.md, newer version available: see agd diff …</span>
+<span class="l" style="--t:3.6s"><em class="k-new">new</em>      .claude/skills/project-profile/SKILL.md</span>
+<span class="l c" style="--t:4.2s;--n:10"><b>$</b> <span class="type">agd update</span></span>
+<span class="l m" style="--t:4.8s">…</span>
+<span class="l" style="--t:4.9s">agentic-defaults is at 0.3.0: 30 updated, 1 added, 0 removed.</span>
+<span class="l" style="--t:5.0s">Review the changes with git diff, and commit .agd.lock with them.</span>
+<span class="l c" style="--t:5.4s;--n:0"><b>$</b> <span class="cursor" aria-hidden="true"></span></span></pre>
+              </div>
+            </figure>
+          </div>
+
+          <div class="agd-sheet__foot">
+            <p class="agd-works">
+              Works with any assistant that reads files from your repository:<br>
+              <span>Claude Code</span><span>GitHub Copilot</span><span>Cursor</span><span>Codex</span><span>Gemini CLI</span>
+            </p>
+            <table class="agd-titleblock">
+              <tr><th>Title</th><td><strong>agd</strong></td><th>Sheet</th><td>1 of 1</td></tr>
+              <tr><th>Does</th><td colspan="3">Installs and updates agentic setups</td></tr>
+              <tr><th>Needs</th><td>bash 3.2+ · git</td><th>License</th><td>MIT</td></tr>
+              <tr><th>Runs on</th><td>macOS · Linux · Git Bash</td><th>Rev</th><td><a href="https://github.com/Zejnilovic/agd/releases/latest">latest ↗</a></td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="agd-section agd-notes" aria-labelledby="agd-why">
+    <div class="agd-wrap">
+      <p class="agd-kicker" id="agd-why">Why agd · general notes</p>
+      <ol class="agd-notes__list">
+        <li>Copy a good agent setup into ten projects, and you have ten setups.</li>
+        <li>Copy a new version over them, and you wipe out what each project changed.</li>
+        <li>So nobody updates, and the copies drift apart.</li>
+      </ol>
+      <p class="agd-notes__answer">
+        agd keeps a setup in one git repository, installs it into every project at a version,
+        and updates it <span class="agd-redline">without touching what each project made its own.</span>
+      </p>
+    </div>
+  </section>
+
+  <section class="agd-section agd-anatomy" aria-labelledby="agd-anatomy">
+    <div class="agd-wrap agd-anatomy__grid">
+      <div class="agd-anatomy__text">
+        <p class="agd-kicker">Section A–A · one installed file</p>
+        <h2 id="agd-anatomy">The source's lines update. The project's lines stay.</h2>
+        <p>
+          agd records exactly what it installed, so it can tell your changes from the source's.
+          Each installed file has parts that belong to the source, and parts that belong to your project.
+        </p>
+        <ul class="agd-legend">
+          <li><span class="agd-swatch agd-swatch--source" aria-hidden="true"></span>
+            <p><strong>From the source.</strong> <code>agd update</code> replaces it with each release you take.</p></li>
+          <li><span class="agd-swatch agd-swatch--yours" aria-hidden="true"></span>
+            <p><strong>The project's, in red pencil.</strong> An agent's <code>model:</code> and <code>tools:</code>, and a <code>## This project</code> section. Every update keeps them.</p></li>
+          <li><svg class="agd-swatch agd-swatch--edit" viewBox="0 0 44 26" aria-hidden="true">
+              <path d="M5 13 a4 4 0 0 1 5-6 a5 5 0 0 1 9-2 a5 5 0 0 1 9 0 a5 5 0 0 1 9 2 a4 4 0 0 1 3 7 a4 4 0 0 1-3 7 a5 5 0 0 1-9 2 a5 5 0 0 1-9 0 a5 5 0 0 1-9-2 a4 4 0 0 1-5-8 z"/>
+              <path d="M36 25 L41 16 L46 25 Z"/><text x="39.4" y="24">1</text>
+            </svg>
+            <p><strong>Anything else you change</strong> is an edit, clouded like a revision. agd never overwrites it: diff it, merge it or reset it, your call.</p></li>
+        </ul>
+      </div>
+
+      <figure class="agd-file">
+        <figcaption><span>.claude/agents/reviewer.md</span><span class="agd-file__lock">✓ in .agd.lock</span></figcaption>
+<pre><span class="r r--source"><span class="tag">source · updated</span>---
+name: reviewer
+description: Reviews a change for bugs and broken contracts.
+</span><span class="r r--yours"><span class="tag">← yours, kept</span>model: opus
+tools: Read, Grep, Glob
+</span><span class="r r--source"><span class="tag">source · updated</span>---
+
+Review the change against its plan. Report each problem
+with its file and line, and what would fix it.
+
+- Check that the tests prove the change.
+- Flag a contract that changed without a note.
+</span><span class="r r--yours"><span class="tag">← yours, kept</span>## This project
+
+- Migrations under db/ need a second reviewer.
+</span></pre>
+      </figure>
+    </div>
+  </section>
+
+  <section class="agd-section agd-parts" aria-labelledby="agd-parts">
+    <div class="agd-wrap">
+      <p class="agd-kicker" id="agd-parts">Parts list · what you get</p>
+      <table class="agd-bom">
+        <thead><tr><th>Item</th><th>Part</th><th>Commands</th></tr></thead>
+        <tbody>
+          <tr><td><span class="agd-balloon">1</span></td>
+            <td><h3>Versioned like a dependency</h3><p>Sources publish releases as git tags. A project installs one, records it in <code>.agd.lock</code>, and moves on with one command, with links to the release notes.</p></td>
+            <td>agd status<br>agd update</td></tr>
+          <tr><td><span class="agd-balloon">2</span></td>
+            <td><h3>Plain files, in your repository</h3><p>No plugin and no runtime. Agents read the files as they are, people review them in pull requests, and git keeps their history.</p></td>
+            <td>git diff</td></tr>
+          <tr><td><span class="agd-balloon">3</span></td>
+            <td><h3>Never overwrites your work</h3><p>Edited files are left alone and reported. See both sides of a change, merge the source's changes into yours, or take the source's file.</p></td>
+            <td>agd diff<br>agd merge<br>agd reset</td></tr>
+          <tr><td><span class="agd-balloon">4</span></td>
+            <td><h3>Take only what you need</h3><p>Packs group a source's files and bring the packs they require. Add and remove them later, and leave out single files with <code>.agd-ignore</code>.</p></td>
+            <td>agd init --with flask,react</td></tr>
+          <tr><td><span class="agd-balloon">5</span></td>
+            <td><h3>Stack setups</h3><p>Install your team's agents on top of <a href="https://github.com/Zejnilovic/agentic-defaults">agentic-defaults</a>. Where two sources ship the same path, you choose which one wins.</p></td>
+            <td>agd init your-org/team-kit</td></tr>
+          <tr><td><span class="agd-balloon">6</span></td>
+            <td><h3>Small enough to trust</h3><p>One bash script that needs only git, on macOS, Linux and Windows. It copies files, and never runs code from a source.</p></td>
+            <td>bash 3.2+ · git</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="agd-section agd-steps" aria-labelledby="agd-steps">
+    <div class="agd-wrap">
+      <p class="agd-kicker" id="agd-steps">Assembly sequence</p>
+      <ol class="agd-steps__list">
+        <li><div class="agd-dim" aria-hidden="true"><b></b><span>STEP 01</span><b></b></div>
+          <h3>Install</h3><p><code>agd init</code> copies the latest release of a source into your project, and writes <code>.agd.lock</code>.</p></li>
+        <li><div class="agd-dim" aria-hidden="true"><b></b><span>STEP 02</span><b></b></div>
+          <h3>Commit</h3><p>Commit the files with the lock, so the whole team works with the same setup.</p></li>
+        <li><div class="agd-dim" aria-hidden="true"><b></b><span>STEP 03</span><b></b></div>
+          <h3>Make it yours</h3><p>Pick models, limit tools, add your project's rules. Add agents of your own next to the source's.</p></li>
+        <li><div class="agd-dim" aria-hidden="true"><b></b><span>STEP 04</span><b></b></div>
+          <h3>Update</h3><p><code>agd status</code> shows what a new release changes; <code>agd update</code> takes it. Your parts stay.</p></li>
+      </ol>
+    </div>
+  </section>
+
+</div>
+{% endblock %}
+
+{% block content %}
+  <div class="agd-home-content">
+    {{ page.content }}
+  </div>
+{% endblock %}
