@@ -4,7 +4,7 @@ What changed in agd. The next version's changes are collected here; each release
 
 Version numbers: **major** when the lock or `packs.txt` format changes and projects or sources need manual steps, **minor** for new commands or options, **patch** for fixes.
 
-## 0.1.1 (unreleased)
+## 0.1.1 (2026-10-24)
 
 - `agd status` no longer calls every pack "new" after a project moves from a release without `packs.txt`, such as agentic-defaults 0.3.0, and doesn't mention a new pack whose files `.agd-ignore` keeps out.
 - Replacing a file with another source's copy no longer dead-ends. When the file has your changes, or `.agd-ignore` gave it away from another source after an update, `agd init <source>` lists it and asks first; `--yes` skips the question.
