@@ -1,0 +1,24 @@
+name: Check agd
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      # Run every OS to the end, so a failure on one doesn't hide the result of the other.
+      fail-fast: false
+      matrix:
+        # On macOS the tests run agd with /bin/bash, which is bash 3.2, the oldest bash it supports.
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax
+        run: bash -n bin/agd && bash -n scripts/bump.sh
+      - name: Tests
+        run: python3 -m unittest discover -s tests -v

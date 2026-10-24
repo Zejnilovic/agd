@@ -1,0 +1,1049 @@
+#!/usr/bin/env bash
+# agd installs agentic-defaults, and kits laid out like it, in a project, and keeps it up to date.
+# Works with bash 3.2 (macOS) and Git Bash (Windows), and needs only git and POSIX tools.
+#
+# Usage: agd [-C <dir>] [--offline] <command>
+#   init [<source>][@<version>|@<commit>] [--with <pack>,...]
+#                             install every pack of the latest release of agentic-defaults, or of
+#                             <source>: a GitHub owner/repo, a git URL or a local folder. @ picks a
+#                             release or a commit. --with installs only the named packs and the
+#                             packs they require
+#   adopt [<source>][@<version>]
+#                             start managing a copy made by hand or by scripts/sync.sh, without
+#                             changing a file; the version comes from AGENTS.md unless given
+#   status [--check]          show what agd update would do; --check exits 1 when an update is due
+#   update [--to <version>|<commit>]
+#                             update to the latest release, or to the given release or commit
+#   add <pack>                install a pack, and the packs it requires, from the installed release
+#   remove <pack>             remove a pack; files you changed stay, as yours
+#   diff <path>               show your changes to a kit file, and the kit's changes since it was installed
+#   merge <path>              merge the latest kit version into a kit file you changed
+#   reset [<path>] [--yes]    put kit files back as the kit has them, dropping every project change except
+#                             the "This project" section of AGENTS.md; asks first, unless --yes
+#   source list               list the sources here, with their versions and packs
+#   source remove <name>      remove a source; files you changed stay, as yours
+#   -C <dir>                work in <dir> instead of the current folder
+#   --offline                 use the cached copy of each source instead of fetching it
+#   --version, --help
+#
+# Updates keep the project's parts of kit files: an agent's model: and tools: lines, and a
+# "## This project" section at the end of a Markdown file. A file changed anywhere else is left alone.
+#
+# Environment: AGD_SOURCE replaces the default source URL, and AGD_CACHE the cache folder
+# (default ~/.cache/agd).
+
+set -u
+version=0.1.0
+default_name=agentic-defaults
+default_url=${AGD_SOURCE:-https://github.com/Zejnilovic/agentic-defaults.git}
+cache_root=${AGD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/agd}
+lock_file=.agd.lock
+ignore_file=.agd-ignore
+old_ignore_file=.agentic-defaults-ignore  # from scripts/sync.sh, before agd
+
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; }
+die() { echo "agd: $*" >&2; exit 2; }
+count() { if [ "$1" = 1 ]; then echo "1 $2"; else echo "$1 $2s"; fi; }
+
+dir=. offline=0 command="" arg="" arg2="" with="" to="" check=0 yes=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -C) [ $# -ge 2 ] || die "-C needs a folder"; dir=$2; shift ;;
+    --offline) offline=1 ;;
+    --with) [ $# -ge 2 ] || die "--with needs pack names, for example --with flask,react"; with=$2; shift ;;
+    --with=*) with=${1#--with=} ;;
+    --to) [ $# -ge 2 ] || die "--to needs a version, for example --to 0.4.0"; to=$2; shift ;;
+    --to=*) to=${1#--to=} ;;
+    --check) check=1 ;;
+    --yes) yes=1 ;;
+    --version) echo "agd $version"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) die "unknown option $1 (see agd --help)" ;;
+    *)
+      if [ -z "$command" ]; then command=$1
+      elif [ -z "$arg" ]; then arg=$1
+      elif [ -z "$arg2" ]; then arg2=$1
+      else die "unexpected argument $1 (see agd --help)"
+      fi ;;
+  esac
+  shift
+done
+case "$command" in
+  diff|merge) [ -n "$arg" ] || die "agd $command needs a path, for example agd $command .claude/agents/reviewer.md" ;;
+  add|remove) [ -n "$arg" ] || die "agd $command needs a pack, for example agd $command flask" ;;
+  init|reset|adopt) ;;
+  source)
+    case "$arg" in
+      list) [ -z "$arg2" ] || die "unexpected argument $arg2 (see agd --help)" ;;
+      remove) [ -n "$arg2" ] || die "agd source remove needs a source name: see agd source list" ;;
+      *) die "agd source needs list or remove (see agd --help)" ;;
+    esac ;;
+  *) [ -z "$arg" ] || die "unexpected argument $arg (see agd --help)" ;;
+esac
+[ -z "$arg2" ] || [ "$command" = source ] || die "unexpected argument $arg2 (see agd --help)"
+[ -d "$dir" ] || die "no folder $dir"
+project=$(cd "$dir" && pwd)
+[ -z "$with" ] || [ "$command" = init ] || die "--with works only with init"
+[ -z "$to" ] || [ "$command" = update ] || die "--to works only with update"
+[ "$check" = 0 ] || [ "$command" = status ] || die "--check works only with status"
+[ "$yes" = 0 ] || [ "$command" = reset ] || die "--yes works only with reset"
+
+tmp=$(mktemp -d) || die "can't create a temporary folder"
+trap 'rm -rf "$tmp"' EXIT
+
+# Each source is a git repository with kit/, packs.txt and v<major.minor.patch> tags. agd keeps a
+# bare clone of it in the cache, named after its URL, and reads releases from the tags.
+cache_of() { printf '%s/%s.git\n' "$cache_root" "$(printf '%s' "$1" | git hash-object --stdin)"; }
+
+refresh() { # <url> <cache>: clones or fetches the source, unless --offline
+  if [ ! -d "$2" ]; then
+    [ "$offline" = 0 ] || die "no cached copy of $1 yet: run once without --offline"
+    mkdir -p "$cache_root" || die "can't create $cache_root"
+    if ! git clone -q --bare "$1" "$2" </dev/null 2>"$tmp/git.err"; then
+      cat "$tmp/git.err" >&2; rm -rf "$2"; die "can't fetch $1"
+    fi
+  elif [ "$offline" = 0 ]; then
+    if ! git -C "$2" fetch -q --force --update-head-ok "$1" '+refs/tags/*:refs/tags/*' '+refs/heads/*:refs/heads/*' \
+      </dev/null 2>"$tmp/git.err"; then
+      cat "$tmp/git.err" >&2; die "can't fetch $1 (use --offline to work from the cache)"
+    fi
+  fi
+}
+
+releases() { # <cache>: every release, oldest first, without the v
+  git -C "$1" tag -l 'v*' | sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' | sort -t. -k1,1n -k2,2n -k3,3n
+}
+latest() { releases "$1" | tail -1; }
+
+# A source is installed at a release (a version such as 1.2.0, read from the tag v1.2.0) or at a commit
+# (its full SHA in the lock).
+is_commit() { printf '%s\n' "$1" | grep -Eq '^[0-9a-f]{7,40}$'; }
+treeish() { if is_commit "$1"; then echo "$1"; else echo "v$1"; fi; }
+label() { if is_commit "$1"; then echo "commit $(printf '%s' "$1" | cut -c1-7)"; else echo "$1"; fi; }
+
+resolve_ref() { # <url> <cache> <version or commit>: prints the version, or the commit's full SHA
+  local sha
+  if is_commit "$3"; then
+    sha=$(git -C "$2" rev-parse -q --verify "$3^{commit}" </dev/null)
+    if [ -z "$sha" ] && [ "$offline" = 0 ]; then
+      git -C "$2" fetch -q "$1" "$3" </dev/null 2>/dev/null
+      sha=$(git -C "$2" rev-parse -q --verify "$3^{commit}" </dev/null)
+    fi
+    [ -n "$sha" ] || die "$1 has no commit $3 (a commit that isn't on a branch needs its full SHA)"
+    echo "$sha"
+  else
+    git -C "$2" rev-parse -q --verify "refs/tags/v${3#v}" >/dev/null </dev/null || die "$1 has no release ${3#v}"
+    echo "${3#v}"
+  fi
+}
+
+newest() { # <cache> <installed>: the latest release, or what is installed when the source has no releases
+  local now
+  now=$(latest "$1")
+  echo "${now:-$2}"
+}
+
+newer() { # <a> <b>: succeeds when version a is newer than version b; a commit is never newer or older
+  if is_commit "$1" || is_commit "$2"; then return 1; fi
+  awk -v a="$1" -v b="$2" 'BEGIN { split(a, x, "."); split(b, y, ".")
+    for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+    exit 1 }'
+}
+
+root_of() { # <cache> <version>: the folder a release installs from, ending in /, or nothing for the repository's root
+  local r
+  r=$(git -C "$1" show "$(treeish "$2"):packs.txt" 2>/dev/null </dev/null | awk '$1 == "root" { print $2; exit }')
+  r=${r:-kit/}
+  r=${r#./}
+  case "$r" in .|"") echo "" ;; */) echo "$r" ;; *) echo "$r/" ;; esac
+}
+
+# The source a user names: a git URL, a local path, or a GitHub owner/repo. Prints "<name> <url>".
+resolve_source() { # <source>
+  local url name
+  case "$1" in
+    *[[:space:]]*) die "$1 isn't a git URL, a local path or a GitHub owner/repo" ;;
+    *://*|git@*) url=$1 ;;
+    /*|./*|../*) url=$(cd "$1" 2>/dev/null && pwd) || die "no folder $1" ;;
+    *)
+      if [ -d "$1" ]; then
+        url=$(cd "$1" && pwd)
+        name=$(basename "$url")
+        echo "${name%.git} $url"
+        return
+      fi
+      printf '%s\n' "$1" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' \
+        || die "$1 isn't a git URL, a local path or a GitHub owner/repo"
+      url=https://github.com/${1%.git}.git ;;
+  esac
+  name=$(basename "$url")
+  echo "${name%.git} $url"
+}
+
+# Reads release <version> of a source into $tmp/<name>.packs ("min <version>", "pack <name> <required>...",
+# "entry <pack> <path>") and $tmp/<name>.files ("<pack> <mode> <blob> <path>", paths relative to the root).
+load() { # <cache> <version> <name>
+  local cache=$1 v=$2 out=$tmp/$3 min root
+  root=$(root_of "$cache" "$v")
+  if ! git -C "$cache" -c core.quotePath=false ls-tree -r "$(treeish "$v")" ${root:+-- "$root"} >"$out.tree" 2>"$tmp/git.err"; then
+    cat "$tmp/git.err" >&2; die "can't read release $v"
+  fi
+  awk -F '\t' -v root="$root" '{ split($1, m, " "); path = substr($2, length(root) + 1)
+      if (path ~ /[[:space:]"\\]/) { print "agd: kit paths can'\''t contain spaces or quotes: " path > "/dev/stderr"; bad = 1 }
+      print m[1], m[3], path }
+    END { exit bad }' "$out.tree" >"$out.blobs" || die "release $v can't be installed"
+  if git -C "$cache" show "$(treeish "$v"):packs.txt" >"$out.txt" 2>/dev/null; then
+    awk '/^[ \t]*(#|$)/ { next }
+      /^[ \t]/ { if (pack != "") print "entry", pack, $1; next }
+      $1 == "min-agd" { print "min", $2; next }
+      $1 == "pack" { pack = $2; line = "pack " $2; for (i = 4; i <= NF; i++) line = line " " $i; print line }' \
+      "$out.txt" >"$out.packs"
+  else
+    # Releases before packs.txt (0.1.0 to 0.3.0) are one pack, core, with every file.
+    printf 'pack core\nentry core\n' >"$out.packs"
+  fi
+  # A path ending in / takes every file under it; an empty entry takes every file.
+  awk 'FILENAME == ARGV[1] { if ($1 == "entry") { n++; owner[n] = $2; entry[n] = $3 } next }
+    { for (i = 1; i <= n; i++) { e = entry[i]
+        if (e == "" || $3 == e || (substr(e, length(e)) == "/" && substr($3, 1, length(e)) == e)) { print owner[i], $0; break } } }' \
+    "$out.packs" "$out.blobs" >"$out.files"
+  min=$(awk '$1 == "min" { print $2 }' "$out.packs")
+  if [ -n "$min" ] && newer "$min" "$version"; then
+    die "release $v needs agd $min or newer, and this is agd $version: upgrade agd, for example with brew upgrade agd"
+  fi
+}
+
+with_requirements() { # <packs file> <pack>...: prints the packs and every pack they need, sorted
+  local packs=$1 want changed name need
+  shift
+  want=" $* " changed=1
+  while [ "$changed" = 1 ]; do
+    changed=0
+    for name in $want; do
+      for need in $(awk -v p="$name" '$1 == "pack" && $2 == p { for (i = 3; i <= NF; i++) print $i }' "$packs"); do
+        case "$want" in *" $need "*) ;; *) want="$want$need " changed=1 ;; esac
+      done
+    done
+  done
+  # A requirement of another source's pack (<source>:<pack>) isn't installed with this source.
+  printf '%s\n' $want | grep . | grep -v : | LC_ALL=C sort
+}
+
+needs_elsewhere() { # <packs file> <pack>...: the other sources' packs these packs require, as <source>:<pack>
+  local packs=$1 pack
+  shift
+  for pack in "$@"; do
+    awk -v p="$pack" '$1 == "pack" && $2 == p { for (i = 3; i <= NF; i++) if ($i ~ /:/) print $i }' "$packs"
+  done | LC_ALL=C sort -u
+}
+
+check_needs() { # <packs file> <pack>...: stops when a pack of another source they require isn't in $tmp/lock.packs
+  local need
+  for need in $(needs_elsewhere "$@"); do
+    grep -qx "pack ${need%%:*} ${need#*:}" "$tmp/lock.packs" \
+      || die "$need is required, but isn't installed here: install it first, for example with agd init or agd add $need"
+  done
+}
+
+# Paths the project never wants from a source, one path or pattern per line, # for comments. A line
+# <source>:<pattern> applies to that source only.
+patterns=$(cat "$project/$ignore_file" "$project/$old_ignore_file" 2>/dev/null | grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$')
+is_ignored() { # <path> <source>
+  [ -n "$patterns" ] || return 1
+  while IFS= read -r pattern; do
+    case "$pattern" in
+      *:*) [ "${pattern%%:*}" = "$2" ] || continue; pattern=${pattern#*:} ;;
+    esac
+    # shellcheck disable=SC2254
+    case "$1" in $pattern) return 0 ;; esac
+  done <<EOF
+$patterns
+EOF
+  return 1
+}
+
+# The parts of a kit file. "kit" is the part the kit owns: the file without CRs, trailing blank lines,
+# the frontmatter's model: line and tools: entry, and, in Markdown, everything from "## This project"
+# down. "body" is the kit part with its model: line, replaced by <model line> when one is given, for
+# merging. "model", "tools" and "section" are the project's parts.
+parts_awk='
+  function out(line) { if (line == "") { blank++; return } while (blank) { print ""; blank-- } print line }
+  BEGIN { own = want == "kit" || want == "body" }
+  { sub(/\r$/, "") }
+  NR == 1 && $0 == "---" { fm = 1; if (own) out($0); next }
+  fm && $0 == "---" { fm = 0; tools = 0; if (own) out($0); next }
+  fm && tools && (/^[ \t]/ || /^- /) { if (want == "tools") print; next }
+  fm { tools = 0 }
+  fm && /^model:/ { if (want == "model") print; else if (want == "body") out(model == "" ? $0 : model); next }
+  fm && /^tools:/ { tools = 1; if (want == "tools") print; next }
+  md && !fm && /^## This project[ \t]*$/ { section = 1 }
+  section { if (want == "section") print; next }
+  own { out($0) }'
+part() { # <kit|body|model|tools|section> <kit path> <file> [<model line>]
+  local md=0
+  case "$2" in *.md) md=1 ;; esac
+  awk -v want="$1" -v md="$md" -v model="${4:-}" "$parts_awk" "$3"
+}
+
+compose() { # <kit path> <new kit file> <project file> <installed kit file>: the new file with the project's parts
+  local md=0 keep=0
+  case "$1" in *.md) md=1 ;; esac
+  part model "$1" "$3" >"$tmp/c.model"
+  part model "$1" "$4" >"$tmp/c.installed"
+  cmp -s "$tmp/c.model" "$tmp/c.installed" || keep=1
+  part tools "$1" "$3" >"$tmp/c.tools"
+  part section "$1" "$3" >"$tmp/c.section"
+  awk -v md="$md" -v keep="$keep" -v model="$tmp/c.model" -v tools="$tmp/c.tools" -v section="$tmp/c.section" '
+    function emit(file,   line) { while ((getline line < file) > 0) print line; close(file) }
+    BEGIN { mine = (getline line < section) > 0; close(section) }
+    { sub(/\r$/, "") }
+    NR == 1 && $0 == "---" { fm = 1; print; next }
+    fm && $0 == "---" { fm = 0; skip = 0; if (keep && !placed) emit(model); emit(tools); print; next }
+    fm && skip && (/^[ \t]/ || /^- /) { next }
+    fm { skip = 0 }
+    fm && /^model:/ { if (keep) { emit(model); placed = 1 } else print; next }
+    fm && /^tools:/ { skip = 1; next }
+    md && !fm && mine && /^## This project[ \t]*$/ { emit(section); done = 1; exit }
+    { print }
+    END { if (md && mine && !done) { print ""; emit(section) } }' "$2"
+}
+
+value() { # <model: line>: its value, or none
+  local v
+  v=$(printf '%s\n' "$1" | sed 's/^model:[[:space:]]*//; s/[[:space:]]*$//; s/[[:space:]]/_/g')
+  echo "${v:-none}"
+}
+
+# Compares the project with release <target> of a source and writes what an update would do to
+# $tmp/actions, one "<action> <path> [<details>]" line each, and the packs it selects to $tmp/selected.
+examine() { # <name> <installed version> <target version> <cache>
+  local name=$1 base=$2 target=$3 cache=$4 path sha mode new dst changed parts bm pm nm tools
+  load "$cache" "$base" base
+  load "$cache" "$target" target
+  : >"$tmp/actions"
+  awk -v s="$name" '$1 == "file" && $2 == s { print $3, $4 }' "$project/$lock_file" >"$tmp/locked"
+
+  # Selected packs: those in the lock, and every pack of the target that holds an installed file, so
+  # files that move to another pack stay, and so does everything installed from a release before packs.txt.
+  { awk -v s="$name" '$1 == "pack" && $2 == s { print $3 }' "$project/$lock_file"
+    awk 'FILENAME == ARGV[1] { have[$1] = 1; next } ($4 in have) { print $1 }' "$tmp/locked" "$tmp/target.files"
+  } | LC_ALL=C sort -u >"$tmp/wanted"
+  awk '$1 == "pack" { print $2 }' "$tmp/target.packs" | LC_ALL=C sort >"$tmp/target.names"
+  awk '$1 == "pack" { print $2 }' "$tmp/base.packs" | LC_ALL=C sort >"$tmp/base.names"
+  with_requirements "$tmp/target.packs" $(LC_ALL=C comm -12 "$tmp/wanted" "$tmp/target.names") >"$tmp/selected"
+  LC_ALL=C comm -23 "$tmp/wanted" "$tmp/target.names" | sed 's/^/gonepack /' >>"$tmp/actions"
+  LC_ALL=C comm -23 "$tmp/target.names" "$tmp/base.names" | LC_ALL=C comm -23 - "$tmp/selected" \
+    | sed 's/^/newpack /' >>"$tmp/actions"
+  awk 'FILENAME == ARGV[1] { selected[$1] = 1; next } ($1 in selected) { print $4, $2, $3 }' \
+    "$tmp/selected" "$tmp/target.files" >"$tmp/target.selected"
+
+  while read -r path sha; do
+    dst=$project/$path
+    set -- $(awk -v p="$path" '$1 == p { print $2, $3; exit }' "$tmp/target.selected")
+    mode=${1:-} new=${2:-}
+    if is_ignored "$path" "$name"; then echo "ignored $path"; continue; fi
+    if [ ! -e "$dst" ]; then echo "deleted $path $sha"; continue; fi
+    git -C "$cache" cat-file blob "$sha" >"$tmp/installed.copy" </dev/null \
+      || die "the cache has no copy of $path as installed: run without --offline"
+    part kit "$path" "$tmp/installed.copy" >"$tmp/installed.kit"
+    part kit "$path" "$dst" >"$tmp/project.kit"
+    changed=0
+    cmp -s "$tmp/installed.kit" "$tmp/project.kit" || changed=1
+    bm=$(part model "$path" "$tmp/installed.copy")
+    pm=$(part model "$path" "$dst")
+    nm=$bm
+    if [ -n "$new" ]; then
+      git -C "$cache" cat-file blob "$new" >"$tmp/target.copy" </dev/null
+      nm=$(part model "$path" "$tmp/target.copy")
+    fi
+    parts=0
+    if [ "$pm" != "$bm" ]; then echo "model $path $(value "$pm") $(value "$bm") $(value "$nm")"; parts=1; fi
+    tools=$(part tools "$path" "$dst" | head -1)
+    if [ -n "$tools" ]; then echo "tools $path ${tools#tools:}"; parts=1; fi
+    [ -z "$(part section "$path" "$dst")" ] || parts=1
+    if [ -z "$new" ]; then
+      if [ "$changed" = 0 ] && [ "$parts" = 0 ]; then echo "remove $path"; else echo "orphan $path"; fi
+    elif [ "$new" = "$sha" ]; then
+      if [ "$changed" = 1 ]; then echo "edited $path $sha"; else echo "keep $path $sha"; fi
+    elif [ "$changed" = 1 ]; then
+      echo "edited-newer $path $sha"
+    else
+      echo "update $path $sha $new $mode"
+    fi
+  done <"$tmp/locked" >>"$tmp/actions"
+
+  while read -r path mode new; do
+    awk -v p="$path" '$1 == p { found = 1 } END { exit !found }' "$tmp/locked" && continue
+    is_ignored "$path" "$name" && continue
+    if [ -e "$project/$path" ]; then echo "taken $path"; else echo "new $path $new $mode"; fi
+  done <"$tmp/target.selected" >>"$tmp/actions"
+}
+
+notes() { # <url> <from> <to> <cache>: links to the notes of each release after <from> up to <to>, for GitHub sources
+  local repo x
+  repo=$(printf '%s\n' "$1" | sed -n -e 's#^https://github\.com/\([^/]*/[^/]*\)$#\1#p' -e 's#^git@github\.com:\([^/]*/[^/]*\)$#\1#p' \
+    | sed 's/\.git$//')
+  [ -n "$repo" ] || return 0
+  releases "$4" | while read -r x; do
+    if newer "$x" "$2" && ! newer "$x" "$3"; then echo "notes    https://github.com/$repo/releases/tag/v$x"; fi
+  done
+}
+
+model_note() { # <path> <project's model> <installed kit's> <target kit's>
+  if [ "$4" != "$3" ]; then
+    echo "model    $1: kept $2; the kit now suggests $4 (was $3)"
+  else
+    echo "model    $1: $2 (kit: $3)"
+  fi
+}
+
+prune() { # <folder>: removes it and its parents while they are empty, up to the project
+  local d=$1
+  while [ "$d" != "$project" ] && [ "${d#"$project"/}" != "$d" ] && rmdir "$d" 2>/dev/null; do d=$(dirname "$d"); done
+}
+
+need_lock() { [ -f "$project/$lock_file" ] || die "no $lock_file in $project: run agd init"; }
+sources() { awk '$1 == "source" { print $2, $3, $4 }' "$project/$lock_file"; }
+source_line() { awk -v s="$1" '$1 == "source" && $2 == s { print $3, $4 }' "$project/$lock_file"; }
+
+rel_path() { # <path as given>: the path relative to the project
+  local p=$1
+  case "$p" in "$project"/*) p=${p#"$project"/} ;; esac
+  printf '%s\n' "${p#./}"
+}
+
+locked() { # <path>: prints "<source> <blob>" for a file agd manages, or fails
+  awk -v p="$1" '$1 == "file" && $3 == p { print $2, $4; found = 1; exit } END { exit !found }' "$project/$lock_file"
+}
+
+set_lock_sha() { # <source> <path> <blob>: records a new installed version of one file
+  awk -v s="$1" -v p="$2" -v h="$3" '$1 == "file" && $2 == s && $3 == p { $4 = h } { print }' "$project/$lock_file" \
+    >"$tmp/lock.new" && cat "$tmp/lock.new" >"$project/$lock_file"
+}
+
+reset_copy() { # <kit path> <kit file> <project file>: the kit file, with the project's section where the kit has one
+  if [ -n "$(part section "$1" "$2")" ] && [ -n "$(part section "$1" "$3")" ]; then
+    awk '/^## This project[ \t]*$/ { exit } { print }' "$2"
+    part section "$1" "$3"
+  else
+    cat "$2"
+  fi
+}
+
+dropped() { # <kit path> <project file> <kit file>: what a reset drops, for its list
+  local what="" pm km
+  pm=$(part model "$1" "$2")
+  km=$(part model "$1" "$3")
+  [ "$pm" = "$km" ] || what="model $(value "$pm")"
+  [ -z "$(part tools "$1" "$2")" ] || what="${what:+$what, }tools line"
+  if [ -n "$(part section "$1" "$2")" ] && [ -z "$(part section "$1" "$3")" ]; then
+    what="${what:+$what, }This project section"
+  fi
+  part kit "$1" "$2" >"$tmp/d.project"
+  part kit "$1" "$3" >"$tmp/d.kit"
+  cmp -s "$tmp/d.project" "$tmp/d.kit" || what="${what:+$what, }your edits"
+  echo "${what:-line endings or blank lines}"
+}
+
+write_lock() { # from $tmp/lock.sources, $tmp/lock.packs and $tmp/lock.files
+  {
+    echo "# Written by agd. Commit it, and don't edit it by hand."
+    echo "agd-lock 1"
+    cat "$tmp/lock.sources"
+    LC_ALL=C sort "$tmp/lock.packs"
+    LC_ALL=C sort "$tmp/lock.files"
+  } >"$project/$lock_file"
+}
+
+# What init and adopt are given: [<source>][@<version>|@<commit>]. A git@host:... URL keeps its @.
+parse_spec() { # <spec>: sets spec_name, spec_url and spec_ref
+  local spec=$1
+  spec_name=$default_name spec_url=$default_url spec_ref=""
+  case "$spec" in
+    *@*)
+      if printf '%s\n' "${spec##*@}" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+$|^[0-9a-f]{7,40}$'; then
+        spec_ref=${spec##*@} spec=${spec%@*}
+      fi ;;
+  esac
+  if [ -n "$spec" ]; then
+    set -- $(resolve_source "$spec")
+    [ $# = 2 ] || exit 2
+    spec_name=$1 spec_url=$2
+  fi
+}
+
+# The version on the first line of AGENTS.md in a copy made by hand or by scripts/sync.sh.
+copied_version() { sed -n '1s/.*agentic-defaults \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$project/AGENTS.md" 2>/dev/null; }
+
+cmd_adopt() {
+  [ ! -f "$project/$lock_file" ] || die "$project is already set up with agd: see agd status"
+  local name url ref cache v wanted pack mode sha path dst locked=0 differ=0 missing=0
+  parse_spec "$arg"
+  name=$spec_name url=$spec_url ref=${spec_ref:-$(copied_version)}
+  [ -n "$ref" ] || die "AGENTS.md doesn't say which release of $name this copy came from: run agd adopt @<version>"
+  cache=$(cache_of "$url")
+  refresh "$url" "$cache"
+  v=$(resolve_ref "$url" "$cache" "$ref") || exit 2
+  load "$cache" "$v" new
+
+  # Packs: every pack with a file here, and the packs they require.
+  : >"$tmp/present"
+  while read -r pack mode sha path; do
+    is_ignored "$path" "$name" || [ ! -e "$project/$path" ] || echo "$pack" >>"$tmp/present"
+  done <"$tmp/new.files"
+  wanted=$(with_requirements "$tmp/new.packs" $(LC_ALL=C sort -u "$tmp/present"))
+  [ -n "$wanted" ] || die "no files of $name $(label "$v") are here: run agd init instead"
+
+  : >"$tmp/lock.files"
+  while read -r pack mode sha path; do
+    printf '%s\n' "$wanted" | grep -qx -- "$pack" || continue
+    is_ignored "$path" "$name" && continue
+    dst=$project/$path
+    if [ -e "$dst" ]; then
+      echo "file $name $path $sha" >>"$tmp/lock.files"
+      locked=$((locked + 1))
+      git -C "$cache" cat-file blob "$sha" >"$tmp/a.kit" </dev/null
+      cmp -s "$tmp/a.kit" "$dst" || differ=$((differ + 1))
+    else
+      echo "missing  $path (its pack is here, so agd update installs it, unless $ignore_file lists it)"
+      missing=$((missing + 1))
+    fi
+  done <"$tmp/new.files"
+  echo "source $name $url $v" >"$tmp/lock.sources"
+  printf '%s\n' "$wanted" | sed "s/^/pack $name /" >"$tmp/lock.packs"
+  write_lock
+
+  echo "Adopted $name $(label "$v"): $(count "$locked" file) from the packs $(echo $wanted). No file changed."
+  case "$differ" in
+    0) ;;
+    1) echo "1 file differs from $(label "$v"): agd status shows whether it counts as an edit." ;;
+    *) echo "$differ files differ from $(label "$v"): agd status shows which count as edits." ;;
+  esac
+  echo "Commit $lock_file, then run agd status."
+}
+
+cmd_init() {
+  local copied name url ref cache v all wanted pack mode sha path dst owner owner_sha owner_url
+  parse_spec "$arg"
+  name=$spec_name url=$spec_url ref=$spec_ref
+  if [ -f "$project/$lock_file" ]; then
+    # A set-up project: init <source> adds another source.
+    [ -n "$arg" ] || die "$project is already set up with agd: see agd status (agd init <source> adds another source)"
+    if sources | awk -v n="$name" '$1 == n { found = 1 } END { exit !found }'; then
+      die "this project already has a source named $name: see agd source list"
+    fi
+    lock_parts
+  else
+    copied=$(copied_version)
+    [ -z "$copied" ] || die "this project has a copy of agentic-defaults $copied: run agd adopt to manage it with agd"
+    : >"$tmp/lock.sources"
+    : >"$tmp/lock.packs"
+    : >"$tmp/lock.files"
+  fi
+  case "$url" in *[[:space:]]*) die "source URLs can't contain spaces: $url" ;; esac
+
+  cache=$(cache_of "$url")
+  refresh "$url" "$cache"
+  if [ -n "$ref" ]; then
+    v=$(resolve_ref "$url" "$cache" "$ref") || exit 2
+  else
+    v=$(latest "$cache")
+    [ -n "$v" ] || die "$url has no releases (tags like v1.2.3): name a commit with $url@<sha>"
+  fi
+  load "$cache" "$v" new
+
+  all=$(awk '$1 == "pack" { print $2 }' "$tmp/new.packs" | LC_ALL=C sort)
+  if [ -n "$with" ]; then
+    for pack in $(printf '%s' "$with" | tr ',' ' '); do
+      printf '%s\n' "$all" | grep -qx -- "$pack" || die "$name $(label "$v") has no pack $pack. Its packs: $(echo $all)"
+    done
+    wanted=$(with_requirements "$tmp/new.packs" $(printf '%s' "$with" | tr ',' ' '))
+  else
+    wanted=$all
+  fi
+  check_needs "$tmp/new.packs" $wanted
+
+  # Decide every path before writing anything. A path another source installed is a conflict, unless
+  # the ignore file drops it for one of the two.
+  local added=0 taken=0 ignored=0 replaced=0
+  : >"$tmp/plan"
+  : >"$tmp/conflicts"
+  while read -r pack mode sha path; do
+    printf '%s\n' "$wanted" | grep -qx -- "$pack" || continue
+    if is_ignored "$path" "$name"; then ignored=$((ignored + 1)); continue; fi
+    set -- $(awk -v p="$path" '$1 == "file" && $3 == p { print $2, $4; exit }' "$tmp/lock.files")
+    owner=${1:-} owner_sha=${2:-}
+    if [ -n "$owner" ]; then
+      if ! is_ignored "$path" "$owner"; then
+        echo "  $path, also from $owner: add $owner:$path to take $name's copy, or $name:$path to keep $owner's" >>"$tmp/conflicts"
+        continue
+      fi
+      owner_url=$(awk -v s="$owner" '$1 == "source" && $2 == s { print $3 }' "$tmp/lock.sources")
+      untouched "$path" "$owner_sha" "$(cache_of "$owner_url")" \
+        || die "$path has your changes, so $name can't replace $owner's copy: agd reset $path first, or keep $owner's with $name:$path in $ignore_file"
+      echo "replace $mode $sha $path $owner" >>"$tmp/plan"
+    elif [ -e "$project/$path" ]; then
+      echo "taken    $path (a project file has this path; not installed)"
+      taken=$((taken + 1))
+    else
+      echo "install $mode $sha $path" >>"$tmp/plan"
+    fi
+  done <"$tmp/new.files"
+  if [ -s "$tmp/conflicts" ]; then
+    {
+      echo "agd: $name ships paths that another source already installed here:"
+      cat "$tmp/conflicts"
+      echo "Choose one source for each path with a line in $ignore_file, then run agd init again."
+    } >&2
+    exit 2
+  fi
+
+  while read -r kind mode sha path owner; do
+    dst=$project/$path
+    mkdir -p "$(dirname "$dst")" && git -C "$cache" cat-file blob "$sha" >"$dst" </dev/null || die "can't write $path"
+    [ "$mode" != 100755 ] || chmod +x "$dst"
+    if [ "$kind" = replace ]; then
+      grep -v "^file $owner $path " "$tmp/lock.files" >"$tmp/lock.files.kept"
+      mv "$tmp/lock.files.kept" "$tmp/lock.files"
+      echo "replaced $path ($owner's copy, as $ignore_file asks)"
+      replaced=$((replaced + 1))
+    fi
+    echo "file $name $path $sha" >>"$tmp/lock.files"
+    added=$((added + 1))
+  done <"$tmp/plan"
+  echo "source $name $url $v" >>"$tmp/lock.sources"
+  printf '%s\n' "$wanted" | sed "s/^/pack $name /" >>"$tmp/lock.packs"
+  write_lock
+
+  echo "Installed $name $(label "$v"): $(count "$added" file) from the packs $(echo $wanted)."
+  [ "$taken" = 0 ] || echo "$taken taken: project files already use those paths, so agd left them alone."
+  [ "$ignored" = 0 ] || echo "$ignored ignored, as $ignore_file asks."
+  case "$url" in /*) echo "The source is a local path, so $lock_file works only on this machine." ;; esac
+  echo "Commit $lock_file along with the new files."
+}
+
+cmd_source() {
+  need_lock
+  local name url v other pack need needers="" path sha dst removed=0
+  if [ "$arg" = list ]; then
+    sources | while read -r name url v; do
+      echo "$name $(label "$v") $url (packs:$(awk -v s="$name" '$1 == "pack" && $2 == s { printf " %s", $3 }' "$project/$lock_file"))"
+    done
+    return 0
+  fi
+  name=$arg2
+  set -- $(source_line "$name")
+  [ $# = 2 ] || die "no source named $name here: see agd source list"
+  url=$1 v=$2
+  # Refuse while another source's installed packs require one of this source's packs.
+  sources >"$tmp/sources"
+  while read -r other _ _; do
+    [ "$other" != "$name" ] || continue
+    set -- $(source_line "$other")
+    [ -d "$(cache_of "$1")" ] || refresh "$1" "$(cache_of "$1")"
+    load "$(cache_of "$1")" "$2" "o.$other"
+    for pack in $(awk -v s="$other" '$1 == "pack" && $2 == s { print $3 }' "$project/$lock_file"); do
+      for need in $(needs_elsewhere "$tmp/o.$other.packs" "$pack"); do
+        case "$need" in "$name":*) needers="$needers $other:$pack" ;; esac
+      done
+    done
+  done <"$tmp/sources"
+  [ -z "$needers" ] || die "$(echo $needers) requires packs of $name: remove it first"
+
+  lock_parts
+  : >"$tmp/lock.kept"
+  while read -r kind owner path sha; do
+    if [ "$owner" != "$name" ]; then
+      echo "$kind $owner $path $sha" >>"$tmp/lock.kept"
+      continue
+    fi
+    dst=$project/$path
+    if [ ! -e "$dst" ]; then
+      continue
+    elif untouched "$path" "$sha" "$(cache_of "$url")"; then
+      rm -f "$dst" && prune "$(dirname "$dst")"
+      echo "removed  $path"
+      removed=$((removed + 1))
+    else
+      echo "kept     $path (it has your changes, so it is yours now)"
+    fi
+  done <"$tmp/lock.files"
+  mv "$tmp/lock.kept" "$tmp/lock.files"
+  grep -v "^pack $name " "$tmp/lock.packs" >"$tmp/lock.packs.kept"
+  mv "$tmp/lock.packs.kept" "$tmp/lock.packs"
+  grep -v "^source $name " "$tmp/lock.sources" >"$tmp/lock.sources.kept"
+  mv "$tmp/lock.sources.kept" "$tmp/lock.sources"
+  if [ -s "$tmp/lock.sources" ]; then
+    write_lock
+    echo "Removed the source $name: $(count "$removed" file) deleted. Commit $lock_file along with the changes."
+  else
+    rm -f "$project/$lock_file"
+    echo "Removed the source $name: $(count "$removed" file) deleted. It was the last one, so $lock_file is gone too."
+  fi
+}
+
+cmd_status() {
+  need_lock
+  local due=0 notice=0 name url v cache now kind path a b c
+  sources >"$tmp/sources"
+  while read -r name url v; do
+    cache=$(cache_of "$url")
+    refresh "$url" "$cache"
+    now=$(latest "$cache")
+    if is_commit "$v" && [ -n "$now" ]; then
+      echo "$name is installed at $(label "$v"), and its latest release is $now: agd update moves to it."
+      due=1
+    elif is_commit "$v"; then
+      echo "$name is installed at $(label "$v"), and it has no releases."
+      now=$v
+    elif [ -n "$now" ] && newer "$now" "$v"; then
+      echo "$name $v is installed, and $now is available: run agd update."
+      notes "$url" "$v" "$now" "$cache"
+      due=1
+    else
+      echo "$name $v is installed, the latest release."
+      now=$v
+    fi
+    examine "$name" "$v" "$now" "$cache"
+    while read -r kind path a b c; do
+      case "$kind" in
+        update) echo "update   $path"; due=1 ;;
+        new) echo "new      $path"; due=1 ;;
+        remove) echo "removed  $path (no longer in the kit: agd update deletes it)"; due=1 ;;
+        orphan) echo "removed  $path (no longer in the kit, but it has your changes: agd update keeps it as yours)"; due=1 ;;
+        ignored) echo "ignored  $path (listed in $ignore_file: agd update stops managing it and keeps the file)"; due=1 ;;
+        edited) echo "edited   $path"; notice=1 ;;
+        edited-newer) echo "edited   $path, newer version available: see agd diff $path, then agd merge or agd reset it"; due=1 ;;
+        deleted) echo "deleted  $path (add it to $ignore_file to stop this notice)"; notice=1 ;;
+        taken) echo "taken    $path (a project file has this path, so the kit's isn't installed)" ;;
+        gonepack) echo "pack     $path is gone from $name $(label "$now")" ;;
+        newpack) echo "pack     $path is new in $name $(label "$now"): agd add $path installs it" ;;
+        model) model_note "$path" "$a" "$b" "$c" ;;
+        tools) echo "tools    $path: ${a:-a list}${b:+ $b}${c:+ $c}" ;;
+      esac
+    done <"$tmp/actions"
+  done <"$tmp/sources"
+  [ "$due" = 1 ] || [ "$notice" = 1 ] || echo "Nothing to do."
+  [ "$check" = 0 ] || [ "$due" = 0 ] || exit 1
+}
+
+cmd_update() {
+  need_lock
+  local name url v cache target kind path a b c dst updated added removed
+  sources >"$tmp/sources"
+  [ -z "$to" ] || [ "$(grep -c . "$tmp/sources")" -le 1 ] || die "--to works only with a single source"
+  : >"$tmp/lock.sources"
+  : >"$tmp/lock.packs"
+  : >"$tmp/lock.files"
+  while read -r name url v; do
+    updated=0 added=0 removed=0
+    cache=$(cache_of "$url")
+    refresh "$url" "$cache"
+    if [ -n "$to" ]; then
+      target=$(resolve_ref "$url" "$cache" "$to") || exit 2
+    else
+      target=$(newest "$cache" "$v")
+    fi
+    if newer "$target" "$v"; then notes "$url" "$v" "$target" "$cache"; fi
+    examine "$name" "$v" "$target" "$cache"
+    while read -r kind path a b c; do
+      dst=$project/$path
+      case "$kind" in
+        keep|edited) echo "file $name $path $a" >>"$tmp/lock.files" ;;
+        deleted)
+          echo "file $name $path $a" >>"$tmp/lock.files"
+          echo "deleted  $path (add it to $ignore_file to stop this notice)" ;;
+        edited-newer)
+          echo "file $name $path $a" >>"$tmp/lock.files"
+          echo "edited   $path: left alone, and a newer version is available (see agd diff $path, then agd merge or agd reset it)" ;;
+        update)
+          git -C "$cache" cat-file blob "$a" >"$tmp/u.installed" </dev/null
+          git -C "$cache" cat-file blob "$b" >"$tmp/u.new" </dev/null
+          compose "$path" "$tmp/u.new" "$dst" "$tmp/u.installed" >"$tmp/u.out" && cat "$tmp/u.out" >"$dst" || die "can't write $path"
+          [ "$c" != 100755 ] || chmod +x "$dst"
+          echo "file $name $path $b" >>"$tmp/lock.files"
+          echo "updated  $path"; updated=$((updated + 1)) ;;
+        new)
+          mkdir -p "$(dirname "$dst")" && git -C "$cache" cat-file blob "$a" >"$dst" </dev/null || die "can't write $path"
+          [ "$b" != 100755 ] || chmod +x "$dst"
+          echo "file $name $path $a" >>"$tmp/lock.files"
+          echo "added    $path"; added=$((added + 1)) ;;
+        remove)
+          rm -f "$dst" && prune "$(dirname "$dst")"
+          echo "removed  $path"; removed=$((removed + 1)) ;;
+        orphan) echo "kept     $path (no longer in the kit, but it has your changes, so it is yours now)" ;;
+        ignored) echo "ignored  $path (listed in $ignore_file: agd no longer manages it, and the file stays)" ;;
+        taken) echo "taken    $path (a project file has this path, so the kit's isn't installed)" ;;
+        gonepack) echo "pack     $path is gone from $name $(label "$target")" ;;
+        newpack) echo "pack     $path is new in $name $(label "$target"): agd add $path installs it" ;;
+        model) [ "$b" = "$c" ] || model_note "$path" "$a" "$b" "$c" ;;
+      esac
+    done <"$tmp/actions"
+    echo "source $name $url $target" >>"$tmp/lock.sources"
+    sed "s/^/pack $name /" "$tmp/selected" >>"$tmp/lock.packs"
+    echo "$name is at $(label "$target"): $updated updated, $added added, $removed removed."
+  done <"$tmp/sources"
+  write_lock
+  echo "Review the changes with git diff, and commit $lock_file with them."
+}
+
+# Finds the source here whose installed release has <[source:]pack>, and loads that release as $tmp/pk.*.
+# Sets pack_name, pack_source, pack_url, pack_ref and pack_cache.
+find_pack() { # <[source:]pack>
+  local want=$1 only="" name url v cache all=""
+  case "$want" in *:*) only=${want%%:*} want=${want#*:} ;; esac
+  pack_name=$want pack_source=""
+  sources >"$tmp/pk.sources"
+  while read -r name url v; do
+    [ -z "$only" ] || [ "$name" = "$only" ] || continue
+    cache=$(cache_of "$url")
+    [ -d "$cache" ] || refresh "$url" "$cache"
+    load "$cache" "$v" "pk.$name"
+    all="$all $(awk '$1 == "pack" { printf " %s", $2 }' "$tmp/pk.$name.packs")"
+    awk -v p="$want" '$1 == "pack" && $2 == p { found = 1 } END { exit !found }' "$tmp/pk.$name.packs" || continue
+    [ -z "$pack_source" ] || die "both $pack_source and $name have a pack $want: name one, for example agd $command $name:$want"
+    pack_source=$name pack_url=$url pack_ref=$v pack_cache=$cache
+  done <"$tmp/pk.sources"
+  [ -n "$pack_source" ] || die "no source here has a pack $want. Packs:$all"
+  cp "$tmp/pk.$pack_source.packs" "$tmp/pk.packs"
+  cp "$tmp/pk.$pack_source.files" "$tmp/pk.files"
+}
+
+lock_parts() { # splits the lock into $tmp/lock.sources, $tmp/lock.packs and $tmp/lock.files, for write_lock
+  grep '^source ' "$project/$lock_file" >"$tmp/lock.sources"
+  grep '^pack ' "$project/$lock_file" >"$tmp/lock.packs"
+  grep '^file ' "$project/$lock_file" >"$tmp/lock.files"
+}
+
+untouched() { # <path> <installed blob> <cache>: succeeds when the project's copy has no edits and no project parts
+  local dst=$project/$1
+  git -C "$3" cat-file blob "$2" >"$tmp/t.installed" </dev/null || return 1
+  part kit "$1" "$tmp/t.installed" >"$tmp/t.kit"
+  part kit "$1" "$dst" >"$tmp/t.project"
+  cmp -s "$tmp/t.kit" "$tmp/t.project" || return 1
+  [ "$(part model "$1" "$dst")" = "$(part model "$1" "$tmp/t.installed")" ] || return 1
+  [ -z "$(part tools "$1" "$dst")" ] && [ -z "$(part section "$1" "$dst")" ]
+}
+
+cmd_add() {
+  need_lock
+  local pack mode sha path dst added=0
+  find_pack "$arg"
+  awk -v s="$pack_source" '$1 == "pack" && $2 == s { print $3 }' "$project/$lock_file" >"$tmp/have"
+  if grep -qx -- "$pack_name" "$tmp/have"; then
+    echo "$pack_source:$pack_name is already installed."
+    return 0
+  fi
+  with_requirements "$tmp/pk.packs" "$pack_name" $(cat "$tmp/have") | LC_ALL=C comm -23 - "$tmp/have" >"$tmp/adding"
+  awk -v s="$pack_source" '$1 == "file" && $2 == s { print $3 }' "$project/$lock_file" >"$tmp/have.files"
+  lock_parts
+  while read -r pack mode sha path; do
+    grep -qx -- "$pack" "$tmp/adding" || continue
+    grep -qxF -- "$path" "$tmp/have.files" && continue
+    is_ignored "$path" "$pack_source" && continue
+    dst=$project/$path
+    if [ -e "$dst" ]; then
+      echo "taken    $path (a project file has this path, so the kit's isn't installed)"
+      continue
+    fi
+    mkdir -p "$(dirname "$dst")" && git -C "$pack_cache" cat-file blob "$sha" >"$dst" </dev/null || die "can't write $path"
+    [ "$mode" != 100755 ] || chmod +x "$dst"
+    echo "file $pack_source $path $sha" >>"$tmp/lock.files"
+    echo "added    $path"
+    added=$((added + 1))
+  done <"$tmp/pk.files"
+  sed "s/^/pack $pack_source /" "$tmp/adding" >>"$tmp/lock.packs"
+  write_lock
+  echo "Added the packs $(echo $(cat "$tmp/adding")) from $pack_source $(label "$pack_ref"): $(count "$added" file)."
+  echo "Commit $lock_file along with the new files."
+}
+
+cmd_remove() {
+  need_lock
+  local other needers="" path sha dst removed=0
+  find_pack "$arg"
+  awk -v s="$pack_source" '$1 == "pack" && $2 == s { print $3 }' "$project/$lock_file" >"$tmp/have"
+  grep -qx -- "$pack_name" "$tmp/have" || die "$pack_source:$pack_name isn't installed here"
+  while read -r other; do
+    [ "$other" != "$pack_name" ] || continue
+    with_requirements "$tmp/pk.packs" "$other" | grep -qx -- "$pack_name" && needers="$needers $other"
+  done <"$tmp/have"
+  [ -z "$needers" ] || die "the packs$needers require $pack_name: remove them first"
+  awk -v p="$pack_name" '$1 == p { print $4 }' "$tmp/pk.files" >"$tmp/removing"
+  lock_parts
+  : >"$tmp/lock.kept"
+  while read -r kind name path sha; do
+    if [ "$name" != "$pack_source" ] || ! grep -qxF -- "$path" "$tmp/removing"; then
+      echo "$kind $name $path $sha" >>"$tmp/lock.kept"
+      continue
+    fi
+    dst=$project/$path
+    if [ ! -e "$dst" ]; then
+      continue
+    elif untouched "$path" "$sha" "$pack_cache"; then
+      rm -f "$dst" && prune "$(dirname "$dst")"
+      echo "removed  $path"
+      removed=$((removed + 1))
+    else
+      echo "kept     $path (it has your changes, so it is yours now)"
+    fi
+  done <"$tmp/lock.files"
+  mv "$tmp/lock.kept" "$tmp/lock.files"
+  grep -vx "pack $pack_source $pack_name" "$tmp/lock.packs" >"$tmp/lock.packs.kept"
+  mv "$tmp/lock.packs.kept" "$tmp/lock.packs"
+  write_lock
+  echo "Removed the pack $pack_source:$pack_name: $(count "$removed" file) deleted."
+  echo "Commit $lock_file along with the changes."
+}
+
+cmd_diff() {
+  need_lock
+  local path entry name sha url v cache now new d
+  path=$(rel_path "$arg")
+  entry=$(locked "$path") || die "$path isn't a kit file agd manages"
+  set -- $entry
+  name=$1 sha=$2
+  set -- $(source_line "$name")
+  url=$1 v=$2
+  cache=$(cache_of "$url")
+  refresh "$url" "$cache"
+  now=$(newest "$cache" "$v")
+  d=$tmp/diff
+  mkdir -p "$d/installed/$(dirname "$path")" "$d/yours/$(dirname "$path")" "$d/kit-$now/$(dirname "$path")"
+  git -C "$cache" cat-file blob "$sha" >"$d/installed/$path" </dev/null \
+    || die "the cache has no copy of $path as installed: run without --offline"
+  if [ ! -e "$project/$path" ]; then
+    echo "You deleted $path."
+  elif cmp -s "$d/installed/$path" "$project/$path"; then
+    echo "You haven't changed $path since it was installed."
+  else
+    cp "$project/$path" "$d/yours/$path"
+    echo "Your changes to $path since it was installed:"
+    (cd "$d" && diff -u "installed/$path" "yours/$path")
+  fi
+  new=$(git -C "$cache" rev-parse -q --verify "$(treeish "$now"):$(root_of "$cache" "$now")$path" </dev/null)
+  if [ -z "$new" ]; then
+    echo "$name $(label "$now") no longer has $path."
+  elif [ "$new" = "$sha" ]; then
+    echo "The kit hasn't changed $path since it was installed ($name $(label "$now") is the latest release)."
+  else
+    git -C "$cache" cat-file blob "$new" >"$d/kit-$now/$path" </dev/null
+    echo "The kit's changes to $path up to $name $(label "$now"):"
+    (cd "$d" && diff -u "installed/$path" "kit-$now/$path")
+  fi
+  return 0
+}
+
+cmd_merge() {
+  need_lock
+  local path entry name sha url v cache now new dst conflicts
+  path=$(rel_path "$arg")
+  dst=$project/$path
+  entry=$(locked "$path") || die "$path isn't a kit file agd manages"
+  set -- $entry
+  name=$1 sha=$2
+  set -- $(source_line "$name")
+  url=$1 v=$2
+  [ -e "$dst" ] || die "$path is deleted here: agd reset $path brings it back"
+  cache=$(cache_of "$url")
+  refresh "$url" "$cache"
+  now=$(newest "$cache" "$v")
+  new=$(git -C "$cache" rev-parse -q --verify "$(treeish "$now"):$(root_of "$cache" "$now")$path" </dev/null) \
+    || die "$name $(label "$now") no longer has $path: agd update decides what happens to it"
+  if [ "$new" = "$sha" ]; then
+    echo "Nothing to merge: the kit hasn't changed $path since it was installed."
+    return 0
+  fi
+  git -C "$cache" cat-file blob "$sha" >"$tmp/m.installed" </dev/null \
+    || die "the cache has no copy of $path as installed: run without --offline"
+  git -C "$cache" cat-file blob "$new" >"$tmp/m.kit" </dev/null
+  # Merge what the kit owns, with the project's model value set back to the installed one so a model
+  # choice never conflicts, then put the project's parts back.
+  part body "$path" "$tmp/m.installed" >"$tmp/m.base"
+  part body "$path" "$dst" "$(part model "$path" "$tmp/m.installed")" >"$tmp/m.ours"
+  part body "$path" "$tmp/m.kit" >"$tmp/m.theirs"
+  git merge-file -p -L yours -L "as installed" -L "$name $(label "$now")" "$tmp/m.ours" "$tmp/m.base" "$tmp/m.theirs" \
+    >"$tmp/m.merged" </dev/null
+  conflicts=$?
+  [ "$conflicts" -lt 128 ] || die "can't merge $path"
+  compose "$path" "$tmp/m.merged" "$dst" "$tmp/m.installed" >"$tmp/m.out" && cat "$tmp/m.out" >"$dst" || die "can't write $path"
+  set_lock_sha "$name" "$path" "$new"
+  if [ "$conflicts" = 0 ]; then
+    echo "merged   $path: your changes and the kit's up to $name $(label "$now"), without conflicts. Review it with git diff."
+  else
+    echo "merged   $path with $(count "$conflicts" conflict): resolve the <<<<<<< markers, then review it with git diff."
+    exit 1
+  fi
+}
+
+cmd_reset() {
+  need_lock
+  local only="" name url v cache path mode new dst n=0 i answer
+  if [ -n "$arg" ]; then
+    only=$(rel_path "$arg")
+    locked "$only" >/dev/null || die "$only isn't a kit file agd manages"
+  fi
+  sources >"$tmp/sources"
+  : >"$tmp/resets"
+  while read -r name url v; do
+    cache=$(cache_of "$url")
+    refresh "$url" "$cache"
+    load "$cache" "$v" release
+    awk -v s="$name" '$1 == "file" && $2 == s { print $3 }' "$project/$lock_file" >"$tmp/locked"
+    while read -r path; do
+      [ -z "$only" ] || [ "$path" = "$only" ] || continue
+      is_ignored "$path" "$name" && continue
+      set -- $(awk -v p="$path" '$4 == p { print $2, $3; exit }' "$tmp/release.files")
+      mode=${1:-} new=${2:-}
+      [ -n "$new" ] || continue
+      dst=$project/$path
+      git -C "$cache" cat-file blob "$new" >"$tmp/r.kit" </dev/null
+      i=$((n + 1))
+      if [ -e "$dst" ]; then
+        reset_copy "$path" "$tmp/r.kit" "$dst" >"$tmp/reset.$i"
+        cmp -s "$tmp/reset.$i" "$dst" && continue
+        echo "reset    $path (drops: $(dropped "$path" "$dst" "$tmp/r.kit"))"
+      else
+        cp "$tmp/r.kit" "$tmp/reset.$i"
+        echo "reset    $path (brings it back)"
+      fi
+      n=$i
+      echo "$n $name $path $new $mode" >>"$tmp/resets"
+    done <"$tmp/locked"
+  done <"$tmp/sources"
+  if [ "$n" = 0 ]; then
+    echo "Nothing to reset: every kit file is as the kit has it."
+    return 0
+  fi
+  if [ "$yes" = 0 ]; then
+    [ -t 0 ] || die "reset would change the files above: confirm in a terminal, or run it with --yes"
+    printf 'Reset %s? What the list drops is lost, unless git has it. [y/N] ' "$(count "$n" file)"
+    read -r answer || answer=""
+    case "$answer" in
+      y|Y|yes|Yes|YES) ;;
+      *) echo "Nothing reset."; return 0 ;;
+    esac
+  fi
+  while read -r i name path new mode; do
+    dst=$project/$path
+    mkdir -p "$(dirname "$dst")" && cat "$tmp/reset.$i" >"$dst" || die "can't write $path"
+    [ "$mode" != 100755 ] || chmod +x "$dst"
+    set_lock_sha "$name" "$path" "$new"
+  done <"$tmp/resets"
+  echo "Reset $(count "$n" file). Review the changes with git diff, and commit $lock_file with them."
+}
+
+case "$command" in
+  init) cmd_init ;;
+  adopt) cmd_adopt ;;
+  status) cmd_status ;;
+  update) cmd_update ;;
+  add) cmd_add ;;
+  source) cmd_source ;;
+  remove) cmd_remove ;;
+  diff) cmd_diff ;;
+  merge) cmd_merge ;;
+  reset) cmd_reset ;;
+  "") usage >&2; exit 2 ;;
+  *) die "unknown command $command (see agd --help)" ;;
+esac

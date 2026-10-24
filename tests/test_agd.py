@@ -1,0 +1,1049 @@
+"""Behavior tests for bin/agd. Run: python3 -m unittest discover -s tests"""
+
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+AGD = REPO / "bin/agd"
+# macOS ships bash 3.2 as /bin/bash; agd must keep working with it.
+BASH = "/bin/bash" if sys.platform == "darwin" else "bash"
+
+GIT_ENV = {
+    **os.environ,
+    "GIT_AUTHOR_NAME": "Test",
+    "GIT_AUTHOR_EMAIL": "test@example.com",
+    "GIT_COMMITTER_NAME": "Test",
+    "GIT_COMMITTER_EMAIL": "test@example.com",
+}
+
+
+def run(args, cwd):
+    return subprocess.run(args, cwd=cwd, env=GIT_ENV, capture_output=True, text=True)
+
+
+def write(root, rel, text="x\n"):
+    path = pathlib.Path(root) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+class VersionTest(unittest.TestCase):
+    """bin/agd's version line and scripts/bump.sh."""
+
+    def test_version_line_matches_version_file(self):
+        version = (REPO / "VERSION").read_text().strip()
+        self.assertIn(f"\nversion={version}\n", AGD.read_text())
+
+    def test_script_has_no_syntax_errors(self):
+        result = subprocess.run([BASH, "-n", str(AGD)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_bump_sets_version_line_and_changelog(self):
+        with tempfile.TemporaryDirectory() as root:
+            for rel in ("VERSION", "bin/agd", "CHANGELOG.md", "scripts/bump.sh"):
+                write(root, rel, (REPO / rel).read_text())
+            current = (REPO / "VERSION").read_text().strip()
+            major, minor, patch = (int(part) for part in current.split("."))
+            new = f"{major}.{minor + 1}.0"
+            result = run(["bash", "scripts/bump.sh", new], root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(pathlib.Path(root, "VERSION").read_text(), new + "\n")
+            self.assertIn(f"\nversion={new}\n", pathlib.Path(root, "bin/agd").read_text())
+            self.assertIn(f"## {new} (unreleased)", pathlib.Path(root, "CHANGELOG.md").read_text())
+            self.assertNotEqual(run(["bash", "scripts/bump.sh", current], root).returncode, 0)
+
+
+class AgdCase(unittest.TestCase):
+    """bin/agd against a temporary source repo and cache, without network."""
+
+    PACKS = ("min-agd 0.1.0\n\npack core\n  AGENTS.md\n  CLAUDE.md\n  .claude/agents/developer.md\n"
+             "  .claude/skills/implementation/\n\npack flask requires core\n  .claude/agents/flask-developer.md\n"
+             "  .claude/skills/flask/\n\npack react requires core\n  .claude/agents/react-developer.md\n"
+             "  .claude/skills/react/\n")
+    KIT = {
+        "AGENTS.md": "<!-- agentic-defaults {v}. From agentic-defaults down to \"This project\". -->\n\n"
+                     "# Working agreement\n\n- Rule one.\n\n## This project\n\n- `make test`: ...\n",
+        "CLAUDE.md": "@AGENTS.md\n",
+        ".claude/agents/developer.md": "---\nname: developer\ndescription: Builds things.\nmodel: haiku\n"
+                                       "skills:\n  - implementation\n---\n\nDeveloper rules.\n",
+        ".claude/skills/implementation/SKILL.md": "---\nname: implementation\ndescription: How to build.\n---\n\nBuild.\n",
+        ".claude/skills/implementation/check.sh": "#!/usr/bin/env bash\necho ok\n",
+        ".claude/agents/flask-developer.md": "---\nname: flask-developer\ndescription: Flask.\nmodel: haiku\n---\n\nFlask.\n",
+        ".claude/skills/flask/SKILL.md": "---\nname: flask\ndescription: Flask practices.\n---\n\nFlask.\n",
+        ".claude/agents/react-developer.md": "---\nname: react-developer\ndescription: React.\nmodel: haiku\n---\n\nReact.\n",
+        ".claude/skills/react/SKILL.md": "---\nname: react\ndescription: React practices.\n---\n\nReact.\n",
+    }
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = pathlib.Path(self._tmp.name)
+        self.source, self.project, self.cache = base / "source", base / "project", base / "cache"
+        self.source.mkdir()
+        self.project.mkdir()
+        run(["git", "init", "-q", "-b", "main"], self.source)
+        self.env = {**GIT_ENV, "AGD_SOURCE": str(self.source), "AGD_CACHE": str(self.cache)}
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def release(self, version, changes=None, packs=None):
+        """Commits KIT with changes and tags it v<version>. A change of None deletes the file; files added by
+        earlier changes stay until deleted. packs=False releases without packs.txt."""
+        for rel, text in {**self.KIT, **(changes or {})}.items():
+            if text is None:
+                (self.source / "kit" / rel).unlink()
+            else:
+                write(self.source, f"kit/{rel}", text.replace("{v}", version))
+        if packs is False:
+            (self.source / "packs.txt").unlink(missing_ok=True)
+        else:
+            write(self.source, "packs.txt", packs or self.PACKS)
+        write(self.source, "VERSION", version + "\n")
+        run(["git", "add", "-A"], self.source)
+        run(["git", "update-index", "--chmod=+x", "kit/.claude/skills/implementation/check.sh"], self.source)
+        self.assertEqual(run(["git", "commit", "-q", "-m", version], self.source).returncode, 0)
+        run(["git", "tag", f"v{version}"], self.source)
+
+    def agd(self, *args):
+        return subprocess.run([BASH, str(AGD), "-C", str(self.project), *args], env=self.env,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True)
+
+    def agd_answering(self, answer, *args):
+        """Runs agd with a terminal as its input, and types answer into it."""
+        import pty
+
+        terminal, agd_side = pty.openpty()
+        try:
+            process = subprocess.Popen([BASH, str(AGD), "-C", str(self.project), *args], env=self.env,
+                                       stdin=agd_side, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            os.close(agd_side)
+            os.write(terminal, (answer + "\n").encode())
+            out, err = process.communicate(timeout=60)
+        finally:
+            os.close(terminal)
+        return subprocess.CompletedProcess(process.args, process.returncode, out, err)
+
+    def lock_lines(self, kind):
+        lines = (self.project / ".agd.lock").read_text().splitlines()
+        return [line for line in lines if line.startswith(kind + " ")]
+
+    def blob(self, version, rel):
+        return run(["git", "rev-parse", f"v{version}:kit/{rel}"], self.source).stdout.strip()
+
+
+class AgdInitTest(AgdCase):
+    def test_init_installs_every_pack_of_the_latest_release_and_writes_a_sorted_lock(self):
+        self.release("1.0.0")
+        self.release("1.1.0", {".claude/agents/developer.md": self.KIT[".claude/agents/developer.md"] + "New rule.\n"})
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for rel in self.KIT:
+            self.assertTrue((self.project / rel).is_file(), rel)
+        self.assertIn("New rule.", (self.project / ".claude/agents/developer.md").read_text())
+        self.assertTrue(os.access(self.project / ".claude/skills/implementation/check.sh", os.X_OK))
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} 1.1.0"])
+        self.assertEqual(self.lock_lines("pack"), ["pack agentic-defaults core", "pack agentic-defaults flask",
+                                                   "pack agentic-defaults react"])
+        files = self.lock_lines("file")
+        self.assertEqual(files, sorted(files))
+        self.assertEqual(len(files), len(self.KIT))
+        developer = ".claude/agents/developer.md"
+        self.assertIn(f"file agentic-defaults {developer} {self.blob('1.1.0', developer)}", files)
+
+    def test_with_installs_only_the_named_packs_and_what_they_require(self):
+        self.release("1.0.0")
+        result = self.agd("init", "--with", "flask")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.project / ".claude/agents/flask-developer.md").exists())
+        self.assertTrue((self.project / ".claude/agents/developer.md").exists())
+        self.assertFalse((self.project / ".claude/agents/react-developer.md").exists())
+        self.assertFalse((self.project / ".claude/skills/react").exists())
+        self.assertEqual(self.lock_lines("pack"), ["pack agentic-defaults core", "pack agentic-defaults flask"])
+
+    def test_unknown_pack_is_refused_and_nothing_is_written(self):
+        self.release("1.0.0")
+        result = self.agd("init", "--with", "flask,vue")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("vue", result.stderr)
+        self.assertIn("react", result.stderr)
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_taken_path_is_skipped_and_reported(self):
+        self.release("1.0.0")
+        write(self.project, ".claude/agents/developer.md", "Our own developer.\n")
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"taken\s+\.claude/agents/developer\.md")
+        self.assertEqual((self.project / ".claude/agents/developer.md").read_text(), "Our own developer.\n")
+        self.assertFalse([line for line in self.lock_lines("file") if " .claude/agents/developer.md " in line])
+
+    def test_ignored_paths_are_not_installed(self):
+        self.release("1.0.0")
+        write(self.project, ".agd-ignore", "# No React agent here\n.claude/agents/react-developer.md\n")
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.project / ".claude/agents/react-developer.md").exists())
+        self.assertTrue((self.project / ".claude/skills/react/SKILL.md").exists())
+        self.assertFalse([line for line in self.lock_lines("file") if "react-developer" in line])
+
+    def test_release_without_packs_file_is_one_core_pack(self):
+        self.release("1.0.0", packs=False)
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for rel in self.KIT:
+            self.assertTrue((self.project / rel).is_file(), rel)
+        self.assertEqual(self.lock_lines("pack"), ["pack agentic-defaults core"])
+
+    def test_kit_needing_a_newer_agd_is_refused(self):
+        self.release("1.0.0", packs=self.PACKS.replace("min-agd 0.1.0", "min-agd 99.0.0"))
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("99.0.0", result.stderr)
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_init_refuses_a_project_that_is_set_up(self):
+        self.release("1.0.0")
+        self.assertEqual(self.agd("init").returncode, 0)
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd status", result.stderr)
+
+    def test_init_points_a_copied_kit_to_adopt(self):
+        self.release("1.0.0")
+        write(self.project, "AGENTS.md", "<!-- agentic-defaults 0.3.0. From agentic-defaults down. -->\n# Rules\n")
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd adopt", result.stderr)
+        self.assertFalse((self.project / ".agd.lock").exists())
+
+    def test_status_after_init_has_nothing_to_do(self):
+        self.release("1.0.0")
+        self.agd("init")
+        result = self.agd("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Nothing to do", result.stdout)
+
+    def test_status_reports_a_newer_release(self):
+        self.release("1.0.0")
+        self.agd("init")
+        self.release("1.1.0", {".claude/skills/flask/SKILL.md": "---\nname: flask\ndescription: New.\n---\n"})
+        result = self.agd("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1.1.0", result.stdout)
+        self.assertIn("agd update", result.stdout)
+        self.assertNotIn("Nothing to do", result.stdout)
+
+    def test_status_reports_edited_and_deleted_kit_files(self):
+        self.release("1.0.0")
+        self.agd("init")
+        write(self.project, ".claude/skills/flask/SKILL.md", "changed\n")
+        os.remove(self.project / ".claude/agents/react-developer.md")
+        result = self.agd("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"edited\s+\.claude/skills/flask/SKILL\.md")
+        self.assertRegex(result.stdout, r"deleted\s+\.claude/agents/react-developer\.md")
+        self.assertNotIn("Nothing to do", result.stdout)
+
+    def test_offline_works_from_the_cache_and_needs_one(self):
+        self.release("1.0.0")
+        result = self.agd("--offline", "init")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--offline", result.stderr)
+        self.assertEqual(self.agd("init").returncode, 0)
+        self.source.rename(self.source.with_name("moved"))
+        result = self.agd("status")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--offline", result.stderr)
+        result = self.agd("status", "--offline")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Nothing to do", result.stdout)
+
+    def test_version_matches_and_help_lists_the_commands(self):
+        result = self.agd("--version")
+        self.assertEqual(result.stdout.strip(), "agd " + (REPO / "VERSION").read_text().strip())
+        result = self.agd("--help")
+        self.assertEqual(result.returncode, 0)
+        for command in ("init", "status", "--offline", "-C"):
+            self.assertIn(command, result.stdout)
+
+    def test_unknown_command_points_to_help(self):
+        result = self.agd("frobnicate")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd --help", result.stderr)
+
+
+class AgdAnySourceTest(AgdCase):
+    """agd with sources other than agentic-defaults, and the project file names."""
+
+    def github(self, repo, path):
+        """Makes https://github.com/<repo>.git fetch from the local path."""
+        url = f"https://github.com/{repo}.git"
+        self.env.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": f"url.{path}.insteadOf", "GIT_CONFIG_VALUE_0": url})
+        return url
+
+    def root_source(self):
+        """A repository that keeps its setup at its root, next to files that aren't part of it."""
+        repo = pathlib.Path(self._tmp.name) / "team-kit"
+        repo.mkdir()
+        run(["git", "init", "-q", "-b", "main"], repo)
+        write(repo, "README.md", "About our setup.\n")
+        write(repo, "packs.txt", "root .\n\npack core\n  .claude/agents/team-reviewer.md\n  .claude/skills/team/\n")
+        write(repo, ".claude/agents/team-reviewer.md", "---\nname: team-reviewer\ndescription: Reviews.\nmodel: sonnet\n---\n\nReview.\n\nCheck the tests.\n")
+        write(repo, ".claude/skills/team/SKILL.md", "---\nname: team\ndescription: Our ways.\n---\n\nOur ways.\n")
+        run(["git", "add", "-A"], repo)
+        run(["git", "commit", "-q", "-m", "1.0.0"], repo)
+        run(["git", "tag", "v1.0.0"], repo)
+        return repo
+
+    def test_project_files_have_agd_names(self):
+        self.release("1.0.0")
+        self.assertEqual(self.agd("init").returncode, 0)
+        self.assertTrue((self.project / ".agd.lock").is_file())
+        self.assertFalse((self.project / ".agentic-defaults.lock").exists())
+
+    def test_init_from_owner_repo_names_the_source_after_the_repository(self):
+        self.release("1.0.0")
+        url = self.github("example/team-kit", self.source)
+        result = self.agd("init", "example/team-kit")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lock_lines("source"), [f"source team-kit {url} 1.0.0"])
+        self.assertTrue((self.project / ".claude/agents/developer.md").is_file())
+
+    def test_init_from_a_local_path_says_it_works_only_here(self):
+        self.release("1.0.0")
+        result = self.agd("init", str(self.source))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lock_lines("source"), [f"source source {self.source} 1.0.0"])
+        self.assertIn("only on this machine", result.stdout)
+
+    def test_unknown_source_form_is_refused(self):
+        result = self.agd("init", "not a source")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not a source isn't a git URL, a local path or a GitHub owner/repo", result.stderr)
+
+    def test_source_with_its_setup_at_its_root_installs_only_its_packs(self):
+        repo = self.root_source()
+        result = self.agd("init", str(repo))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.project / ".claude/agents/team-reviewer.md").is_file())
+        self.assertTrue((self.project / ".claude/skills/team/SKILL.md").is_file())
+        self.assertFalse((self.project / "README.md").exists())
+        self.assertFalse((self.project / "packs.txt").exists())
+        self.assertIn("Nothing to do", self.agd("status").stdout)
+
+        reviewer = ".claude/agents/team-reviewer.md"
+        write(self.project, reviewer, (self.project / reviewer).read_text() + "Our line.\n")
+        write(repo, reviewer, (repo / reviewer).read_text().replace("Review.", "Review carefully."))
+        run(["git", "commit", "-q", "-am", "1.1.0"], repo)
+        run(["git", "tag", "v1.1.0"], repo)
+        diff = self.agd("diff", reviewer)
+        self.assertEqual(diff.returncode, 0, diff.stderr)
+        self.assertIn("+Review carefully.", diff.stdout)
+        merged = self.agd("merge", reviewer)
+        self.assertEqual(merged.returncode, 0, merged.stderr)
+        text = (self.project / reviewer).read_text()
+        self.assertIn("Review carefully.", text)
+        self.assertIn("Our line.", text)
+
+    def test_old_ignore_file_still_keeps_paths_out(self):
+        self.release("1.0.0")
+        write(self.project, ".agentic-defaults-ignore", ".claude/agents/react-developer.md\n")
+        self.assertEqual(self.agd("init").returncode, 0)
+        self.assertFalse((self.project / ".claude/agents/react-developer.md").exists())
+        self.assertTrue((self.project / ".claude/agents/flask-developer.md").exists())
+
+
+class AgdSourceTest(AgdCase):
+    """A team's source on top of agentic-defaults."""
+
+    DEV = ".claude/agents/developer.md"
+    TEAM_REVIEWER = ".claude/agents/team-reviewer.md"
+
+    def setUp(self):
+        super().setUp()
+        self.release("1.0.0")
+
+    def team(self, files=None, packs=None, version="1.0.0", folder="team"):
+        """Creates or releases a team source that keeps its setup at its root."""
+        repo = pathlib.Path(self._tmp.name) / folder
+        if not repo.exists():
+            repo.mkdir(parents=True)
+            run(["git", "init", "-q", "-b", "main"], repo)
+        for rel, text in (files or {self.TEAM_REVIEWER: "---\nname: team-reviewer\ndescription: Ours.\n---\n\nReview.\n"}).items():
+            write(repo, rel, text)
+        write(repo, "packs.txt", packs or ("root .\n\npack review requires agentic-defaults:core\n"
+                                           f"  {self.TEAM_REVIEWER}\n"))
+        run(["git", "add", "-A"], repo)
+        run(["git", "commit", "-q", "-m", version], repo)
+        run(["git", "tag", f"v{version}"], repo)
+        return repo
+
+    def init(self, *args):
+        result = self.agd("init", *args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def read(self, rel):
+        return (self.project / rel).read_text()
+
+    def lock(self):
+        return (self.project / ".agd.lock").read_text()
+
+    def test_init_of_a_second_source_adds_it_next_to_ours(self):
+        self.init()
+        team = self.team()
+        self.init(str(team))
+        self.assertTrue((self.project / self.TEAM_REVIEWER).is_file())
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} 1.0.0",
+                                                     f"source team {team} 1.0.0"])
+        self.assertIn("pack team review", self.lock_lines("pack"))
+        self.assertIn("Nothing to do", self.agd("status").stdout)
+
+    def test_a_pack_that_requires_another_sources_pack_needs_it_installed(self):
+        result = self.agd("init", str(self.team()))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agentic-defaults:core", result.stderr)
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_a_shared_path_stops_with_both_names_until_one_is_ignored(self):
+        self.init()
+        team = self.team({self.DEV: "---\nname: developer\ndescription: Team developer.\n---\n\nTeam rules.\n"},
+                         "root .\n\npack devs requires agentic-defaults:core\n  .claude/agents/developer.md\n")
+        before = self.lock()
+        result = self.agd("init", str(team))
+        self.assertEqual(result.returncode, 2)
+        for text in (self.DEV, "agentic-defaults", "team:", "agentic-defaults:"):
+            self.assertIn(text, result.stderr)
+        self.assertEqual(self.lock(), before)
+
+        write(self.project, ".agd-ignore", f"team:{self.DEV}\n")
+        self.init(str(team))
+        self.assertIn("Developer rules.", self.read(self.DEV))
+
+        write(self.project, ".agd-ignore", f"agentic-defaults:{self.DEV}\n")
+        (self.project / ".agd.lock").write_text(before)
+        self.init(str(team))
+        self.assertIn("Team rules.", self.read(self.DEV))
+        self.assertIn(f"file team {self.DEV} ", self.lock())
+        self.assertNotIn(f"file agentic-defaults {self.DEV} ", self.lock())
+        self.assertIn("Nothing to do", self.agd("status").stdout)
+
+    def test_a_second_source_with_the_same_name_is_refused(self):
+        self.init()
+        self.init(str(self.team()))
+        result = self.agd("init", str(self.team(folder="other/team")))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("already has a source named team", result.stderr)
+
+    def test_update_moves_every_source(self):
+        self.init()
+        team = self.team()
+        self.init(str(team))
+        self.team({self.TEAM_REVIEWER: "---\nname: team-reviewer\ndescription: Ours.\n---\n\nReview twice.\n"},
+                  version="1.1.0")
+        self.assertRegex(self.agd("status").stdout, r"update\s+\.claude/agents/team-reviewer\.md")
+        result = self.agd("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Review twice.", self.read(self.TEAM_REVIEWER))
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} 1.0.0",
+                                                     f"source team {team} 1.1.0"])
+
+    def test_source_list_and_source_remove(self):
+        self.init()
+        team = self.team()
+        self.init(str(team))
+        listing = self.agd("source", "list")
+        self.assertEqual(listing.returncode, 0, listing.stderr)
+        self.assertIn("agentic-defaults", listing.stdout)
+        self.assertIn(f"team 1.0.0 {team}", listing.stdout)
+        result = self.agd("source", "remove", "agentic-defaults")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("team", result.stderr)
+        result = self.agd("source", "remove", "team")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.project / self.TEAM_REVIEWER).exists())
+        self.assertNotIn(" team ", self.lock().replace("\n", " \n"))
+        self.assertIn("Nothing to do", self.agd("status").stdout)
+
+
+class AgdAdoptTest(AgdCase):
+    """agd adopt, for copies made by hand or by scripts/sync.sh before agd."""
+
+    DEV = ".claude/agents/developer.md"
+    REACT = (".claude/agents/react-developer.md", ".claude/skills/react/SKILL.md")
+
+    def setUp(self):
+        super().setUp()
+        self.release("1.0.0")
+
+    def copy(self, skip=()):
+        """Copies the 1.0.0 kit into the project, as sync.sh did."""
+        for rel, text in self.KIT.items():
+            if rel not in skip:
+                write(self.project, rel, text.replace("{v}", "1.0.0"))
+
+    def snapshot(self):
+        return {path.relative_to(self.project).as_posix(): path.read_bytes()
+                for path in self.project.rglob("*") if path.is_file()}
+
+    def test_adopt_locks_a_copy_without_changing_any_file(self):
+        self.copy()
+        write(self.project, self.DEV, self.KIT[self.DEV].replace("Developer rules.", "Our developer rules."))
+        before = self.snapshot()
+        result = self.agd("adopt")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = self.snapshot()
+        self.assertEqual(after.pop(".agd.lock").count(b"\nfile "), len(self.KIT))
+        self.assertEqual(after, before)
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} 1.0.0"])
+        status = self.agd("status").stdout
+        self.assertRegex(status, r"(?m)^edited\s+\.claude/agents/developer\.md$")
+        self.assertEqual(status.count("edited"), 1)
+
+    def test_packs_are_those_with_files_here(self):
+        self.copy(skip=self.REACT)
+        self.assertEqual(self.agd("adopt").returncode, 0)
+        self.assertEqual([line.split()[2] for line in self.lock_lines("pack")], ["core", "flask"])
+        self.assertIn("Nothing to do", self.agd("status").stdout)
+
+    def test_missing_files_of_a_pack_here_are_reported(self):
+        self.copy(skip=self.REACT[1:])
+        result = self.agd("adopt")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"missing\s+\.claude/skills/react/SKILL\.md")
+        self.assertRegex(self.agd("status").stdout, r"new\s+\.claude/skills/react/SKILL\.md")
+
+    def test_old_ignore_file_keeps_paths_out_of_the_lock(self):
+        self.copy()
+        write(self.project, self.REACT[0], "Our own React agent.\n")
+        write(self.project, ".agentic-defaults-ignore", "# Ours\n" + self.REACT[0] + "\n")
+        self.assertEqual(self.agd("adopt").returncode, 0)
+        self.assertFalse([line for line in self.lock_lines("file") if self.REACT[0] in line])
+        self.assertEqual((self.project / self.REACT[0]).read_text(), "Our own React agent.\n")
+
+    def test_a_copy_without_a_marker_needs_a_version(self):
+        self.copy()
+        write(self.project, "AGENTS.md", "# Our rules\n")
+        result = self.agd("adopt")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd adopt @<version>", result.stderr)
+        result = self.agd("adopt", "@1.0.0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} 1.0.0"])
+
+    def test_adopt_refuses_a_set_up_project_and_an_empty_one(self):
+        result = self.agd("adopt", "@1.0.0")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd init", result.stderr)
+        self.assertEqual(self.agd("init").returncode, 0)
+        result = self.agd("adopt")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("already set up", result.stderr)
+
+
+class AgdPacksTest(AgdCase):
+    """agd add and agd remove."""
+
+    API_PACKS = AgdCase.PACKS + "\npack api requires flask\n  .claude/skills/api/\n"
+    API_SKILL = ".claude/skills/api/SKILL.md"
+
+    def setUp(self):
+        super().setUp()
+        self.release("1.0.0", {self.API_SKILL: "---\nname: api\ndescription: API rules.\n---\n"}, packs=self.API_PACKS)
+
+    def init(self, *args):
+        result = self.agd("init", *args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def exists(self, rel):
+        return (self.project / rel).exists()
+
+    def locked(self, rel):
+        return any(line.split()[2] == rel for line in self.lock_lines("file"))
+
+    def test_add_installs_the_pack_and_the_packs_it_requires(self):
+        self.init("--with", "react")
+        result = self.agd("add", "api")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for rel in (self.API_SKILL, ".claude/agents/flask-developer.md", ".claude/skills/flask/SKILL.md"):
+            self.assertTrue(self.exists(rel), rel)
+            self.assertTrue(self.locked(rel), rel)
+        self.assertEqual([line.split()[2] for line in self.lock_lines("pack")], ["api", "core", "flask", "react"])
+        self.assertIn("Nothing to do", self.agd("status").stdout)
+
+    def test_add_installs_from_the_installed_release_not_the_latest(self):
+        self.init("--with", "react")
+        flask = ".claude/skills/flask/SKILL.md"
+        self.release("1.1.0", {flask: self.KIT[flask] + "New in 1.1.\n"}, packs=self.API_PACKS)
+        self.assertEqual(self.agd("add", "flask").returncode, 0)
+        self.assertNotIn("New in 1.1.", (self.project / flask).read_text())
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} 1.0.0"])
+
+    def test_add_skips_taken_and_ignored_paths(self):
+        self.init("--with", "react")
+        write(self.project, ".claude/skills/flask/SKILL.md", "Our flask notes.\n")
+        write(self.project, ".agd-ignore", ".claude/agents/flask-developer.md\n")
+        result = self.agd("add", "flask")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"taken\s+\.claude/skills/flask/SKILL\.md")
+        self.assertEqual((self.project / ".claude/skills/flask/SKILL.md").read_text(), "Our flask notes.\n")
+        self.assertFalse(self.exists(".claude/agents/flask-developer.md"))
+        self.assertIn("pack agentic-defaults flask", self.lock_lines("pack"))
+
+    def test_add_refuses_an_unknown_pack_and_names_an_installed_one(self):
+        self.init("--with", "react")
+        result = self.agd("add", "vue")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("vue", result.stderr)
+        self.assertIn("flask", result.stderr)
+        result = self.agd("add", "react")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already installed", result.stdout)
+
+    def test_remove_deletes_unchanged_files_and_keeps_changed_ones(self):
+        self.init()
+        react_skill, react_dev = ".claude/skills/react/SKILL.md", ".claude/agents/react-developer.md"
+        write(self.project, react_skill, self.KIT[react_skill] + "Our tweak.\n")
+        result = self.agd("remove", "react")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.exists(react_dev))
+        self.assertIn("Our tweak.", (self.project / react_skill).read_text())
+        self.assertRegex(result.stdout, r"kept\s+\.claude/skills/react/SKILL\.md")
+        self.assertFalse(self.locked(react_dev))
+        self.assertFalse(self.locked(react_skill))
+        self.assertNotIn("pack agentic-defaults react", self.lock_lines("pack"))
+        self.assertIn("Nothing to do", self.agd("status").stdout)
+
+    def test_remove_refuses_a_pack_that_others_require(self):
+        self.init()
+        result = self.agd("remove", "flask")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("api", result.stderr)
+        self.assertTrue(self.exists(".claude/agents/flask-developer.md"))
+
+    def test_remove_refuses_a_pack_that_is_not_installed(self):
+        self.init("--with", "react")
+        result = self.agd("remove", "flask")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("isn't installed", result.stderr)
+
+
+class AgdRefTest(AgdCase):
+    """Installing and updating to a given release or commit, and folders as sources."""
+
+    DEV = ".claude/agents/developer.md"
+
+    def setUp(self):
+        super().setUp()
+        self.release("1.0.0")
+
+    def commit(self, text):
+        """Commits a new developer agent without tagging it, and returns the commit's SHA."""
+        write(self.source, f"kit/{self.DEV}", self.KIT[self.DEV].replace("Developer rules.", text))
+        run(["git", "commit", "-q", "-am", text], self.source)
+        return run(["git", "rev-parse", "HEAD"], self.source).stdout.strip()
+
+    def developer(self):
+        return (self.project / self.DEV).read_text()
+
+    def test_init_at_a_version_installs_that_release(self):
+        self.release("1.1.0", {self.DEV: self.KIT[self.DEV].replace("Developer rules.", "Rules of 1.1.")})
+        result = self.agd("init", "@1.0.0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Developer rules.", self.developer())
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} 1.0.0"])
+        self.assertIn("1.1.0 is available", self.agd("status").stdout)
+
+    def test_init_at_a_commit_records_its_sha_and_update_moves_to_the_latest_release(self):
+        sha = self.commit("Rules from main.")
+        result = self.agd("init", f"{self.source}@{sha[:10]}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Rules from main.", self.developer())
+        self.assertEqual(self.lock_lines("source"), [f"source source {self.source} {sha}"])
+        status = self.agd("status")
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertIn(f"commit {sha[:7]}", status.stdout)
+        self.assertIn("latest release is 1.0.0", status.stdout)
+        result = self.agd("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Developer rules.", self.developer())
+        self.assertEqual(self.lock_lines("source"), [f"source source {self.source} 1.0.0"])
+
+    def test_update_to_a_commit_made_after_init(self):
+        self.assertEqual(self.agd("init").returncode, 0)
+        sha = self.commit("Rules from main.")
+        result = self.agd("update", "--to", sha)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Rules from main.", self.developer())
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} {sha}"])
+
+    def test_unknown_version_or_commit_is_refused_and_nothing_written(self):
+        for ref in ("9.9.9", "deadbeef123"):
+            result = self.agd("init", f"@{ref}")
+            self.assertEqual(result.returncode, 2, ref)
+            self.assertIn(ref, result.stderr)
+            self.assertEqual(list(self.project.iterdir()), [], ref)
+
+    def test_an_existing_folder_is_a_source(self):
+        result = subprocess.run([BASH, str(AGD), "-C", str(self.project), "init", "source"], cwd=self.source.parent,
+                                env=self.env, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lock_lines("source"), [f"source source {self.source.resolve()} 1.0.0"])
+
+
+class AgdUpdateTest(AgdCase):
+    """agd status and update: one test per row of the plan's table, plus the project parts."""
+
+    DEV = ".claude/agents/developer.md"
+    FLASK_DEV = ".claude/agents/flask-developer.md"
+    FLASK_SKILL = ".claude/skills/flask/SKILL.md"
+
+    def setUp(self):
+        super().setUp()
+        self.release("1.0.0")
+
+    def init(self, *args):
+        result = self.agd("init", *args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def update(self, *args):
+        result = self.agd("update", *args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def status(self):
+        result = self.agd("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def read(self, rel):
+        return (self.project / rel).read_text()
+
+    def kit(self, rel, old, new):
+        """The kit's text of rel, with old replaced by new."""
+        self.assertIn(old, self.KIT[rel])
+        return self.KIT[rel].replace(old, new)
+
+    def improved(self):
+        return {self.DEV: self.kit(self.DEV, "Developer rules.", "Developer rules, improved.")}
+
+    def locked_sha(self, rel):
+        return next((line.split()[3] for line in self.lock_lines("file") if line.split()[2] == rel), None)
+
+    def test_unchanged_file_gets_the_new_version(self):
+        self.init()
+        self.release("1.1.0", self.improved())
+        self.assertRegex(self.status(), r"update\s+\.claude/agents/developer\.md")
+        self.assertRegex(self.update(), r"updated\s+\.claude/agents/developer\.md")
+        self.assertIn("Developer rules, improved.", self.read(self.DEV))
+        self.assertEqual(self.locked_sha(self.DEV), self.blob("1.1.0", self.DEV))
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} 1.1.0"])
+        self.assertIn("Nothing to do", self.status())
+
+    def test_edited_file_is_reported_and_left_alone(self):
+        self.init()
+        write(self.project, self.FLASK_SKILL, self.KIT[self.FLASK_SKILL] + "Our tweak.\n")
+        self.release("1.1.0", self.improved())
+        self.assertRegex(self.status(), r"(?m)^edited\s+\.claude/skills/flask/SKILL\.md$")
+        self.update()
+        self.assertIn("Our tweak.", self.read(self.FLASK_SKILL))
+        self.assertEqual(self.locked_sha(self.FLASK_SKILL), self.blob("1.0.0", self.FLASK_SKILL))
+
+    def test_edited_file_with_a_newer_kit_version_is_left_alone(self):
+        self.init()
+        write(self.project, self.DEV, self.kit(self.DEV, "Developer rules.", "Our developer rules."))
+        self.release("1.1.0", self.improved())
+        self.assertIn("newer version available", self.status())
+        self.assertIn("agd merge", self.update())
+        self.assertIn("Our developer rules.", self.read(self.DEV))
+        self.assertNotIn("improved", self.read(self.DEV))
+        self.assertEqual(self.locked_sha(self.DEV), self.blob("1.0.0", self.DEV))
+
+    def test_deleted_file_is_not_restored(self):
+        self.init()
+        react = ".claude/agents/react-developer.md"
+        os.remove(self.project / react)
+        self.release("1.1.0", {react: self.KIT[react] + "More.\n"})
+        self.assertRegex(self.update(), r"deleted\s+\.claude/agents/react-developer\.md")
+        self.assertFalse((self.project / react).exists())
+        self.assertIsNotNone(self.locked_sha(react))
+
+    def test_file_removed_from_the_kit_is_deleted_unless_changed(self):
+        self.init()
+        react_skill = ".claude/skills/react/SKILL.md"
+        write(self.project, self.FLASK_SKILL, self.KIT[self.FLASK_SKILL] + "Our tweak.\n")
+        self.release("1.1.0", {react_skill: None, self.FLASK_SKILL: None})
+        self.assertRegex(self.status(), r"removed\s+\.claude/skills/react/SKILL\.md")
+        self.update()
+        self.assertFalse((self.project / ".claude/skills/react").exists())
+        self.assertIn("Our tweak.", self.read(self.FLASK_SKILL))
+        self.assertIsNone(self.locked_sha(react_skill))
+        self.assertIsNone(self.locked_sha(self.FLASK_SKILL))
+        self.assertIn("Nothing to do", self.status())
+
+    def test_new_files_arrive_in_selected_packs_unless_the_path_is_taken(self):
+        self.init("--with", "flask")
+        write(self.project, ".claude/skills/implementation/notes.md", "Our notes.\n")
+        self.release("1.1.0", {".claude/skills/flask/reference.md": "Flask reference.\n",
+                               ".claude/skills/react/reference.md": "React reference.\n",
+                               ".claude/skills/implementation/notes.md": "Kit notes.\n"})
+        status = self.status()
+        self.assertRegex(status, r"new\s+\.claude/skills/flask/reference\.md")
+        self.assertRegex(status, r"taken\s+\.claude/skills/implementation/notes\.md")
+        self.update()
+        self.assertEqual(self.read(".claude/skills/flask/reference.md"), "Flask reference.\n")
+        self.assertFalse((self.project / ".claude/skills/react").exists())
+        self.assertEqual(self.read(".claude/skills/implementation/notes.md"), "Our notes.\n")
+        self.assertIsNotNone(self.locked_sha(".claude/skills/flask/reference.md"))
+
+    def test_model_choice_is_kept_and_a_new_kit_default_reported(self):
+        self.init()
+        write(self.project, self.DEV, self.read(self.DEV).replace("model: haiku", "model: opus"))
+        status = self.status()
+        self.assertIn("Nothing to do", status)
+        self.assertRegex(status, r"model\s+\.claude/agents/developer\.md: opus \(kit: haiku\)")
+        self.release("1.1.0", {
+            self.DEV: self.kit(self.DEV, "model: haiku", "model: sonnet").replace("rules.", "rules, improved."),
+            self.FLASK_DEV: self.kit(self.FLASK_DEV, "model: haiku", "model: sonnet")})
+        self.assertIn("kept opus; the kit now suggests sonnet", self.status())
+        self.assertIn("kept opus; the kit now suggests sonnet", self.update())
+        developer = self.read(self.DEV)
+        self.assertIn("model: opus\n", developer)
+        self.assertNotIn("sonnet", developer)
+        self.assertIn("improved", developer)
+        self.assertIn("model: sonnet\n", self.read(self.FLASK_DEV))
+
+    def test_tools_entry_is_kept_in_both_forms(self):
+        self.init()
+        write(self.project, self.DEV, self.read(self.DEV).replace("model: haiku\n", "model: haiku\ntools: Read, Grep\n"))
+        write(self.project, self.FLASK_DEV,
+              self.read(self.FLASK_DEV).replace("model: haiku\n", "model: haiku\ntools:\n  - Read\n  - Bash\n"))
+        status = self.status()
+        self.assertNotIn("edited", status)
+        self.assertRegex(status, r"tools\s+\.claude/agents/developer\.md: Read, Grep")
+        self.release("1.1.0", {**self.improved(),
+                               self.FLASK_DEV: self.kit(self.FLASK_DEV, "\n\nFlask.\n", "\n\nFlask, improved.\n")})
+        self.update()
+        self.assertIn("tools: Read, Grep\n", self.read(self.DEV))
+        self.assertIn("improved", self.read(self.DEV))
+        self.assertIn("tools:\n  - Read\n  - Bash\n", self.read(self.FLASK_DEV))
+        self.assertIn("Flask, improved.", self.read(self.FLASK_DEV))
+        self.assertIn("Nothing to do", self.status())
+
+    def test_this_project_sections_are_kept(self):
+        self.init()
+        write(self.project, self.DEV, self.read(self.DEV) + "\n## This project\n\n- Use our logger.\n")
+        write(self.project, "AGENTS.md", self.read("AGENTS.md").replace("`make test`: ...", "`make test`: runs pytest"))
+        self.assertIn("Nothing to do", self.status())
+        self.release("1.1.0", {**self.improved(), "AGENTS.md": self.kit("AGENTS.md", "- Rule one.", "- Rule one.\n- Rule two.")})
+        self.update()
+        developer = self.read(self.DEV)
+        self.assertIn("improved", developer)
+        self.assertTrue(developer.endswith("\n## This project\n\n- Use our logger.\n"), developer)
+        agreement = self.read("AGENTS.md")
+        self.assertIn("- Rule two.", agreement)
+        self.assertIn("runs pytest", agreement)
+        self.assertNotIn("`make test`: ...", agreement)
+        self.assertIn("agentic-defaults 1.1.0", agreement.splitlines()[0])
+        self.assertIn("Nothing to do", self.status())
+
+    def test_crlf_copy_counts_as_unchanged(self):
+        self.init()
+        (self.project / self.DEV).write_bytes(self.KIT[self.DEV].replace("\n", "\r\n").encode())
+        status = self.status()
+        self.assertNotIn("edited", status)
+        self.assertIn("Nothing to do", status)
+
+    def test_check_exits_1_only_when_an_update_is_due(self):
+        self.init()
+        self.assertEqual(self.agd("status", "--check").returncode, 0)
+        write(self.project, self.FLASK_SKILL, "changed\n")
+        self.assertEqual(self.agd("status", "--check").returncode, 0)
+        self.release("1.1.0", self.improved())
+        self.assertEqual(self.agd("status", "--check").returncode, 1)
+        self.update()
+        self.assertEqual(self.agd("status", "--check").returncode, 0)
+
+    def test_update_to_a_given_release(self):
+        self.init()
+        self.release("1.1.0", {self.DEV: self.kit(self.DEV, "Developer rules.", "Rules of 1.1.")})
+        self.release("1.2.0", {self.DEV: self.kit(self.DEV, "Developer rules.", "Rules of 1.2.")})
+        self.update("--to", "1.1.0")
+        self.assertIn("Rules of 1.1.", self.read(self.DEV))
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} 1.1.0"])
+        result = self.agd("update", "--to", "9.9.9")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("9.9.9", result.stderr)
+
+    def test_github_source_links_the_notes_of_each_crossed_release(self):
+        url = "https://github.com/example/kit.git"
+        self.env.update({"AGD_SOURCE": url, "GIT_CONFIG_COUNT": "1",
+                         "GIT_CONFIG_KEY_0": f"url.{self.source}.insteadOf", "GIT_CONFIG_VALUE_0": url})
+        self.init()
+        self.release("1.1.0", self.improved())
+        self.release("1.2.0")
+        status = self.status()
+        for version in ("1.1.0", "1.2.0"):
+            self.assertIn(f"https://github.com/example/kit/releases/tag/v{version}", status)
+        self.assertNotIn("tag/v1.0.0", status)
+
+    def test_project_from_a_release_without_packs_keeps_all_its_files(self):
+        self.release("1.1.0", packs=False)
+        self.init()
+        self.assertEqual(self.lock_lines("pack"), ["pack agentic-defaults core"])
+        self.release("1.2.0")
+        out = self.update()
+        self.assertNotRegex(out, r"(?m)^removed ")
+        self.assertIn("0 removed", out)
+        for rel in self.KIT:
+            self.assertTrue((self.project / rel).is_file(), rel)
+        self.assertEqual(self.lock_lines("pack"), ["pack agentic-defaults core", "pack agentic-defaults flask",
+                                                   "pack agentic-defaults react"])
+
+    def test_newly_ignored_file_is_no_longer_managed(self):
+        self.init()
+        react = ".claude/agents/react-developer.md"
+        write(self.project, ".agd-ignore", react + "\n")
+        self.assertRegex(self.update(), r"ignored\s+\.claude/agents/react-developer\.md")
+        self.assertTrue((self.project / react).exists())
+        self.assertIsNone(self.locked_sha(react))
+
+    def test_new_pack_is_mentioned_but_not_installed(self):
+        self.init()
+        self.release("1.1.0", {".claude/skills/vue/SKILL.md": "---\nname: vue\ndescription: Vue.\n---\n"},
+                     packs=self.PACKS + "\npack vue requires core\n  .claude/skills/vue/\n")
+        self.assertIn("agd add vue", self.status())
+        self.update()
+        self.assertFalse((self.project / ".claude/skills/vue").exists())
+
+
+class AgdResolveTest(AgdCase):
+    """agd diff, merge and reset, on a project set up from 1.0.0 with a five-line developer agent."""
+
+    DEV = ".claude/agents/developer.md"
+    BODY = "Line one.\nLine two.\nLine three.\nLine four.\nLine five.\n"
+
+    def setUp(self):
+        super().setUp()
+        self.release("1.0.0", {self.DEV: self.dev()})
+        self.assertEqual(self.agd("init").returncode, 0)
+
+    def dev(self, old=None, new=None):
+        """The kit's developer agent with the five-line body, optionally with one line changed."""
+        text = self.KIT[self.DEV].replace("Developer rules.\n", self.BODY)
+        return text.replace(old, new) if old else text
+
+    def read(self, rel):
+        return (self.project / rel).read_text()
+
+    def lock_text(self):
+        return (self.project / ".agd.lock").read_text()
+
+    def test_diff_shows_your_changes_and_the_kits_and_writes_nothing(self):
+        write(self.project, self.DEV, self.dev("Line one.", "Our line one."))
+        self.release("1.1.0", {self.DEV: self.dev("Line five.", "Line five, improved.")})
+        before = (self.read(self.DEV), self.lock_text())
+        result = self.agd("diff", self.DEV)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for line in ("-Line one.", "+Our line one.", "-Line five.", "+Line five, improved."):
+            self.assertIn(line, result.stdout)
+        self.assertEqual((self.read(self.DEV), self.lock_text()), before)
+
+    def test_commands_refuse_files_agd_does_not_manage(self):
+        write(self.project, "README.md", "Ours.\n")
+        for args in (["diff", "README.md"], ["merge", "README.md"], ["reset", "README.md", "--yes"]):
+            result = self.agd(*args)
+            self.assertEqual(result.returncode, 2, args)
+            self.assertIn("README.md isn't a kit file agd manages", result.stderr)
+        result = self.agd("diff")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("needs a path", result.stderr)
+
+    def test_merge_applies_a_kit_change_that_does_not_overlap(self):
+        write(self.project, self.DEV, self.dev("Line one.", "Our line one.").replace("model: haiku", "model: opus")
+              + "\n## This project\n\n- Use our logger.\n")
+        self.release("1.1.0", {self.DEV: self.dev("Line five.", "Line five, improved.")})
+        result = self.agd("merge", self.DEV)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = self.read(self.DEV)
+        for expected in ("Our line one.", "Line five, improved.", "model: opus\n",
+                         "\n## This project\n\n- Use our logger.\n"):
+            self.assertIn(expected, text)
+        self.assertNotIn("<<<<<<<", text)
+        locked = [line for line in self.lock_lines("file") if f" {self.DEV} " in line]
+        self.assertEqual(locked, [f"file agentic-defaults {self.DEV} {self.blob('1.1.0', self.DEV)}"])
+        self.assertNotIn("newer version available", self.agd("status").stdout)
+
+    def test_merge_marks_overlapping_changes_as_conflicts(self):
+        write(self.project, self.DEV, self.dev("Line three.", "Our line three."))
+        self.release("1.1.0", {self.DEV: self.dev("Line three.", "Kit line three.")})
+        result = self.agd("merge", self.DEV)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("conflict", result.stdout)
+        text = self.read(self.DEV)
+        for expected in ("<<<<<<<", "Our line three.", "Kit line three.", ">>>>>>>"):
+            self.assertIn(expected, text)
+
+    def test_reset_of_one_file_drops_every_project_change(self):
+        write(self.project, self.DEV,
+              self.dev("Line two.", "Our line two.").replace("model: haiku\n", "model: opus\ntools: Read\n")
+              + "\n## This project\n\n- Use our logger.\n")
+        result = self.agd("reset", self.DEV, "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"reset\s+\.claude/agents/developer\.md")
+        self.assertEqual(self.read(self.DEV), self.dev())
+        self.assertIn("Nothing to do", self.agd("status").stdout)
+
+    def test_reset_of_the_project_restores_kit_files_and_keeps_the_agreements_section(self):
+        flask_skill = ".claude/skills/flask/SKILL.md"
+        react = ".claude/agents/react-developer.md"
+        flask_dev = ".claude/agents/flask-developer.md"
+        write(self.project, self.DEV, self.dev("Line two.", "Our line two."))
+        write(self.project, flask_skill, self.KIT[flask_skill] + "\n## This project\n\n- Ours.\n")
+        os.remove(self.project / react)
+        agreement = self.read("AGENTS.md").replace("`make test`: ...", "`make test`: runs pytest")
+        write(self.project, "AGENTS.md", agreement)
+        write(self.project, ".claude/agents/ours.md", "Our own agent.\n")
+        write(self.project, flask_dev, self.KIT[flask_dev] + "Our tweak.\n")
+        write(self.project, ".agd-ignore", flask_dev + "\n")
+        result = self.agd("reset", "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.read(self.DEV), self.dev())
+        self.assertEqual(self.read(flask_skill), self.KIT[flask_skill])
+        self.assertEqual(self.read(react), self.KIT[react])
+        self.assertEqual(self.read("AGENTS.md"), agreement)
+        self.assertEqual(self.read(".claude/agents/ours.md"), "Our own agent.\n")
+        self.assertIn("Our tweak.", self.read(flask_dev))
+
+    def test_reset_asks_first_and_writes_nothing_on_no(self):
+        edited = self.dev("Line two.", "Our line two.")
+        write(self.project, self.DEV, edited)
+        result = self.agd_answering("n", "reset")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(self.DEV, result.stdout)
+        self.assertEqual(self.read(self.DEV), edited)
+        result = self.agd_answering("y", "reset")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.read(self.DEV), self.dev())
+
+    def test_reset_without_a_terminal_needs_yes(self):
+        edited = self.dev("Line two.", "Our line two.")
+        write(self.project, self.DEV, edited)
+        result = self.agd("reset")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--yes", result.stderr)
+        self.assertEqual(self.read(self.DEV), edited)
+
+    def test_reset_with_nothing_to_reset(self):
+        result = self.agd("reset", "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Nothing to reset", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
