@@ -4,7 +4,7 @@ What changed in agd. The next version's changes are collected here; each release
 
 Version numbers: **major** when the lock or `packs.txt` format changes and projects or sources need manual steps, **minor** for new commands or options, **patch** for fixes.
 
-## 0.1.2 (unreleased)
+## 0.1.2 (2026-10-24)
 
 - Install agd without Homebrew: `install.sh` installs or updates it with only bash and git (`curl -fsSL https://raw.githubusercontent.com/Zejnilovic/agd/main/install.sh | bash`), and each release now has the plain `agd` script and `SHA256SUMS` to download by hand.
 - agd has a documentation site, https://zejnilovic.github.io/agd, with the idea behind agd, guides and a reference. `agd --help` links it, and the hint to upgrade agd for a newer source covers installs without Homebrew.
