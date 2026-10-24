@@ -3,6 +3,7 @@
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,59 @@ class VersionTest(unittest.TestCase):
             self.assertIn(f"\nversion={new}\n", pathlib.Path(root, "bin/agd").read_text())
             self.assertIn(f"## {new} (unreleased)", pathlib.Path(root, "CHANGELOG.md").read_text())
             self.assertNotEqual(run(["bash", "scripts/bump.sh", current], root).returncode, 0)
+
+
+class ReleaseTest(unittest.TestCase):
+    """scripts/release.sh and scripts/formula.sh, which the Release workflow runs."""
+
+    CHANGELOG = "# Changelog\n\nWhat changed.\n\n## 0.1.0 (unreleased)\n\n- First release.\n- Fast.\n"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        write(self.root, "scripts/release.sh", (REPO / "scripts/release.sh").read_text())
+        write(self.root, "VERSION", "0.1.0\n")
+        write(self.root, "CHANGELOG.md", self.CHANGELOG)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def release(self):
+        return run(["bash", "scripts/release.sh", "--date", "2026-02-02", "--notes", "notes.md"], self.root)
+
+    def read(self, rel):
+        return pathlib.Path(self.root, rel).read_text()
+
+    def test_release_dates_the_entry_and_writes_its_notes(self):
+        result = self.release()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "0.1.0")
+        self.assertIn("\n## 0.1.0 (2026-02-02)\n", self.read("CHANGELOG.md"))
+        self.assertNotIn("unreleased", self.read("CHANGELOG.md"))
+        self.assertEqual(self.read("notes.md"), "- First release.\n- Fast.\n")
+
+    def test_release_refuses_an_entry_with_a_todo_or_no_entry(self):
+        for changelog in (self.CHANGELOG.replace("- Fast.", "- TODO: describe the change"),
+                          self.CHANGELOG.replace("## 0.1.0 (unreleased)", "## 0.0.9 (2026-01-01)")):
+            write(self.root, "CHANGELOG.md", changelog)
+            result = self.release()
+            self.assertNotEqual(result.returncode, 0, changelog)
+            self.assertIn("0.1.0", result.stderr)
+            self.assertEqual(self.read("CHANGELOG.md"), changelog)
+            self.assertFalse(pathlib.Path(self.root, "notes.md").exists())
+
+    def test_formula_installs_the_release_archive(self):
+        result = run(["bash", str(REPO / "scripts/formula.sh"), "0.1.0", "ab" * 32], self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        formula = result.stdout
+        for expected in ("class Agd < Formula",
+                         'url "https://github.com/Zejnilovic/agd/releases/download/v0.1.0/agd-0.1.0.tar.gz"',
+                         f'sha256 "{"ab" * 32}"', 'license "MIT"', 'bin.install "bin/agd"', "agd --version"):
+            self.assertIn(expected, formula)
+        if shutil.which("ruby"):
+            write(self.root, "agd.rb", formula)
+            check = run(["ruby", "-c", "agd.rb"], self.root)
+            self.assertEqual(check.returncode, 0, check.stderr)
 
 
 class AgdCase(unittest.TestCase):

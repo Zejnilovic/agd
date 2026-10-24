@@ -17,8 +17,8 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Syntax
-        run: bash -n bin/agd && bash -n scripts/bump.sh
+        run: for script in bin/agd scripts/*.sh; do bash -n "$script" || exit 1; done
       - name: Tests
         run: python3 -m unittest discover -s tests -v

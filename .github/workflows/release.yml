@@ -1,0 +1,95 @@
+name: Release
+
+# Releases VERSION: dates its CHANGELOG.md entry, tags the release commit v<version>, creates the GitHub
+# release with the archive agd-<version>.tar.gz, and points the formula in Zejnilovic/homebrew-tap at it.
+# Start it from the Actions tab. A dry run does everything but push, and shows the notes and the formula.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Prepare the release and show the notes and the formula, but push nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+
+jobs:
+  release:
+    # Release only from the default branch, never from a feature branch.
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Checks before release
+        run: |
+          bash -n bin/agd
+          python3 -m unittest discover -s tests
+      - name: Date the changelog entry and write the notes
+        id: prepare
+        run: |
+          NOTES="$RUNNER_TEMP/notes.md"
+          version=$(bash scripts/release.sh --notes "$NOTES")
+          grep -qx "version=$version" bin/agd || { echo "bin/agd's version= line doesn't match VERSION $version"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then echo "v$version is already released"; exit 1; fi
+          { echo "VERSION=$version"; echo "NOTES=$NOTES"; echo "ARCHIVE=$RUNNER_TEMP/agd-$version.tar.gz"; } >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Commit, tag and build the archive
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git commit -q -am "Release $VERSION"
+          git tag -a "v$VERSION" -m "Release $VERSION"
+          git archive --format=tar.gz --prefix="agd-$VERSION/" -o "$ARCHIVE" "v$VERSION"
+          echo "SHA256=$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+      - name: Write the formula
+        run: |
+          git clone -q --depth 1 https://github.com/Zejnilovic/homebrew-tap.git "$RUNNER_TEMP/tap"
+          mkdir -p "$RUNNER_TEMP/tap/Formula"
+          bash scripts/formula.sh "$VERSION" "$SHA256" > "$RUNNER_TEMP/tap/Formula/agd.rb"
+          # The summary keeps the notes and the formula, so a failed last step can be finished by hand.
+          { echo "## Release notes for $VERSION"; echo; cat "$NOTES"; echo
+            echo '## Formula/agd.rb in Zejnilovic/homebrew-tap'; echo; echo '```diff'
+            git -C "$RUNNER_TEMP/tap" add -N Formula/agd.rb
+            git -C "$RUNNER_TEMP/tap" diff
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Push the commit and tag
+        if: ${{ !inputs.dry_run }}
+        run: git push --atomic origin "HEAD:$GITHUB_REF_NAME" "v$VERSION"
+      - name: Create the GitHub release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v$VERSION" --verify-tag --title "$VERSION" --notes-file "$NOTES" "$ARCHIVE"
+      - name: Update the formula in the tap
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          cd "$RUNNER_TEMP/tap"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add Formula/agd.rb
+          git commit -q -m "agd $VERSION"
+          git push -q "https://x-access-token:$TAP_TOKEN@github.com/Zejnilovic/homebrew-tap.git" HEAD
+
+  verify:
+    # Installs the new release the way people will, and runs the formula's test.
+    needs: release
+    if: ${{ !inputs.dry_run }}
+    runs-on: macos-latest
+    steps:
+      - name: Install from the tap and test
+        run: |
+          brew tap zejnilovic/tap
+          brew install zejnilovic/tap/agd
+          brew test zejnilovic/tap/agd
+          brew audit --strict --online zejnilovic/tap/agd
+          test "$(agd --version)" = "agd ${{ needs.release.outputs.version }}"

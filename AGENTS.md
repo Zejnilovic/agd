@@ -28,3 +28,4 @@ Projects and sources depend on these. Changing one needs a major version, and a 
 
 - `VERSION` and the `version=` line in `bin/agd` always match; `bash scripts/bump.sh <version>` sets both and adds an "(unreleased)" entry to `CHANGELOG.md`. Replace its TODO with what changed.
 - A source's `min-agd` names the oldest agd that can install it. Release agd before a source that needs the new version.
+- To release: push everything to `main`, then run the **Release** workflow (Actions tab, or `gh workflow run release.yml`), first with `-f dry_run=true`. It dates the changelog entry (`scripts/release.sh`), tags `v<version>`, creates the GitHub release with `agd-<version>.tar.gz`, writes `Formula/agd.rb` in `Zejnilovic/homebrew-tap` (`scripts/formula.sh`, pushed with the `HOMEBREW_TAP_TOKEN` secret), and then installs and tests it from the tap on macOS. Don't release by hand.
