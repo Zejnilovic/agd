@@ -1,0 +1,8 @@
+# The release archive (git archive in the Release workflow) holds agd, not the agentic setup
+# that agd installs here from agentic-defaults.
+/.agd.lock export-ignore
+/AGENTS.md export-ignore
+/CLAUDE.md export-ignore
+/.claude export-ignore
+/.local_context export-ignore
+CONTEXT.md export-ignore

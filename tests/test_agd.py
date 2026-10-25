@@ -115,6 +115,24 @@ class ReleaseTest(unittest.TestCase):
             check = run(["ruby", "-c", "agd.rb"], self.root)
             self.assertEqual(check.returncode, 0, check.stderr)
 
+    def test_archive_leaves_out_the_agentic_setup(self):
+        # The Release workflow builds the archive with git archive; .gitattributes decides what it holds.
+        shutil.copy(REPO / ".gitattributes", self.root)
+        setup = (".agd.lock", "AGENTS.md", "CLAUDE.md", "CONTEXT.md", "bin/CONTEXT.md",
+                 ".claude/agents/developer.md", ".local_context/README.md")
+        kept = ("bin/agd", "README.md", "LICENSE", "docs/index.md")
+        for rel in setup + kept:
+            write(self.root, rel)
+        for args in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-qm", "release"]):
+            self.assertEqual(run(args, self.root).returncode, 0)
+        archive = run(["git", "archive", "--format=tar", "--prefix=agd-0.1.0/", "-o", "agd.tar", "HEAD"], self.root)
+        self.assertEqual(archive.returncode, 0, archive.stderr)
+        listed = run(["tar", "tf", "agd.tar"], self.root).stdout.split()
+        for rel in kept:
+            self.assertIn("agd-0.1.0/" + rel, listed)
+        for rel in setup:
+            self.assertNotIn("agd-0.1.0/" + rel, listed)
+
 
 class InstallTest(unittest.TestCase):
     """install.sh against a temporary agd repository, without network."""
