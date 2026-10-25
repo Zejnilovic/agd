@@ -4,6 +4,17 @@
 
 Any that reads files from your repository. agd copies a source's files to the paths the source gives them, and doesn't know which tool reads them. agentic-defaults targets Claude Code and GitHub Copilot; a source for Cursor, Codex, Gemini CLI or several at once works the same way.
 
+## Does agentic-defaults work in Cursor?
+
+Mostly. Cursor reads the folders agentic-defaults installs, but not every line in them, according to [Cursor's docs](https://cursor.com/docs/context/subagents):
+
+- `AGENTS.md` at the root: read, as project rules.
+- Skills in `.claude/skills/`: read. Cursor loads them for compatibility with Claude Code.
+- Agents in `.claude/agents/`: read, also for compatibility. An agent of the same name in `.cursor/agents/` wins.
+- `CLAUDE.md`: not read. It only imports `AGENTS.md`, which Cursor reads anyway.
+- An agent's `model:` line: Cursor expects `inherit` or one of its model IDs, and doesn't document short names such as `sonnet`. Set the line to `inherit` or a Cursor model ID; it belongs to the project, so updates keep it.
+- An agent's `tools:` line: ignored. Cursor's agents get all of the parent's tools, and only `readonly: true` limits them.
+
 ## Does agd run code from a source?
 
 No. agd only copies files, and never runs anything it installs. Scripts and hooks a source ships run only when an agent or a person runs them, as with any file in your repository, so review a source's releases as you would review a dependency.
