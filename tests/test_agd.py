@@ -1272,5 +1272,307 @@ class AgdResolveTest(AgdCase):
         self.assertIn("Nothing to reset", result.stdout)
 
 
+class AgdFeedbackTest(AgdCase):
+    """agd feedback, which only reads .agd.lock and the note, so the tests write the lock themselves."""
+
+    GITHUB = "https://github.com/Zejnilovic/agentic-defaults.git"
+    REVIEWER = ".claude/agents/reviewer.md"
+    NOTE = "# The reviewer misses stale CONTEXT.md\n\nOutcome: partly done. Cause: .claude/agents/reviewer.md, rule ignored.\n"
+
+    @classmethod
+    def setUpClass(cls):
+        # A PATH without gh and fzf: a folder with links to every other command on PATH.
+        cls._bin = tempfile.TemporaryDirectory()
+        for folder in os.environ["PATH"].split(os.pathsep):
+            if not os.path.isdir(folder):
+                continue
+            for name in os.listdir(folder):
+                link = os.path.join(cls._bin.name, name)
+                if name not in ("gh", "fzf") and not os.path.lexists(link):
+                    os.symlink(os.path.join(folder, name), link)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._bin.cleanup()
+
+    def setUp(self):
+        super().setUp()
+        self.env["PATH"] = self._bin.name
+        self.files = {}
+
+    def install(self, sources):
+        """Writes the project files and a lock for them. sources: {name: (url, version, {path: text})}."""
+        lines = ["agd-lock 1"]
+        for name, (url, version, files) in sources.items():
+            lines.append(f"source {name} {url} {version}")
+            for path, text in files.items():
+                write(self.project, path, text)
+                blob = run(["git", "hash-object", str(self.project / path)], self.project).stdout.strip()
+                lines.append(f"file {name} {path} {blob}")
+        write(self.project, ".agd.lock", "\n".join(lines) + "\n")
+
+    def kit(self, url=GITHUB, version="0.4.0"):
+        self.install({"agentic-defaults": (url, version, {"AGENTS.md": "# Rules\n", self.REVIEWER: "Review.\n",
+                                                          ".claude/skills/tdd/SKILL.md": "TDD.\n"})})
+
+    def note(self, text=NOTE):
+        write(self.project, ".local_context/feedback/note.md", text)
+        return ".local_context/feedback/note.md"
+
+    def snapshot(self):
+        return {str(p): p.read_bytes() for p in self.project.rglob("*") if p.is_file()}
+
+    def body(self, version="0.4.0"):
+        agd_version = (REPO / "VERSION").read_text().strip()
+        system = " ".join(run(["uname", "-sr"], self.project).stdout.split())
+        return (f"Source: agentic-defaults {version}\nagd: {agd_version}\nOS: {system}\n\nKit files:\n\n"
+                f"- `{self.REVIEWER}` (as installed)\n\n---\n\n{self.NOTE}")
+
+    def fake_gh(self):
+        folder = pathlib.Path(self._tmp.name) / "gh-bin"
+        log = pathlib.Path(self._tmp.name) / "gh.log"
+        write(folder, "gh", '#!/bin/sh\nfor a in "$@"; do printf "%s\\n" "$a"; done >"$GH_LOG"\n'
+                            'while [ $# -gt 0 ]; do [ "$1" = --body-file ] && cat "$2" >"$GH_LOG.body"; shift; done\n')
+        (folder / "gh").chmod(0o755)
+        self.env.update({"PATH": f"{folder}:{self._bin.name}", "GH_LOG": str(log)})
+        return log
+
+    def test_a_source_not_on_github_gets_the_title_body_and_url_printed(self):
+        self.kit(url="https://git.example.com/team/kit.git")
+        note = self.note()
+        before = self.snapshot()
+        result = self.agd("feedback", note)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("https://git.example.com/team/kit.git", result.stdout)
+        self.assertIn("isn't on GitHub", result.stdout)
+        self.assertIn("Title: The reviewer misses stale CONTEXT.md\n", result.stdout)
+        self.assertIn(self.body(), result.stdout)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_changed_and_missing_files_are_marked_and_a_commit_is_labelled(self):
+        self.kit(url="/srv/kits/agentic-defaults", version="ab" * 20)
+        write(self.project, "AGENTS.md", "# Rules\n\nOur rule.\n")
+        (self.project / ".claude/skills/tdd/SKILL.md").unlink()
+        note = self.note("Seen in AGENTS.md and .claude/skills/tdd/SKILL.md, not in docs/AGENTS.md.\n")
+        result = self.agd("feedback", note)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Source: agentic-defaults commit abababa\n", result.stdout)
+        self.assertIn("Title: Feedback on AGENTS.md\n", result.stdout)
+        self.assertIn("- `AGENTS.md` (changed in the project)\n", result.stdout)
+        self.assertIn("- `.claude/skills/tdd/SKILL.md` (missing in the project)\n", result.stdout)
+        self.assertNotIn(self.REVIEWER, result.stdout)
+
+    def test_longer_paths_code_blocks_and_crlf_lines_dont_count(self):
+        self.kit(url="https://github.com/Zejnilovic/agentic-defaults/")
+        note = self.note("```sh\n# install\n```\n\n# Backups confuse it\r\n\r\nSee AGENTS.md.orig and "
+                         ".claude/agents/reviewer.md.bak, then AGENTS.md.\r\n")
+        result = self.agd("feedback", note)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("issues/new?title=Backups%20confuse%20it&body=", result.stdout)
+        self.assertIn("%60AGENTS.md%60%20%28as%20installed%29", result.stdout)
+        self.assertNotIn("%60.claude%2Fagents%2Freviewer.md%60", result.stdout)
+
+    def test_when_gh_fails_the_link_is_printed(self):
+        log = self.fake_gh()
+        gh = pathlib.Path(self._tmp.name) / "gh-bin/gh"
+        gh.write_text(gh.read_text() + 'echo "To get started with GitHub CLI, please run: gh auth login" >&2\nexit 4\n')
+        self.kit()
+        result = self.agd("feedback", self.note())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(log.exists())
+        self.assertIn("gh couldn't open the issue", result.stdout)
+        self.assertIn("https://github.com/Zejnilovic/agentic-defaults/issues/new?title=The%20reviewer", result.stdout)
+        self.assertIn("&body=Source%3A", result.stdout)
+
+    def test_a_note_naming_no_file_goes_to_the_only_source(self):
+        self.kit(url="/srv/kits/agentic-defaults")
+        result = self.agd("feedback", self.note("# Too many questions\n\nThe agents ask too often.\n"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Title: Too many questions\n", result.stdout)
+        self.assertIn("Kit files: none named\n", result.stdout)
+        result = self.agd("feedback", self.note("The agents ask too often.\n"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Title: Feedback on agentic-defaults 0.4.0\n", result.stdout)
+
+    def test_the_note_must_name_one_source(self):
+        self.install({"agentic-defaults": (self.GITHUB, "0.4.0", {"AGENTS.md": "# Rules\n"}),
+                      "team-kit": ("https://github.com/acme/team-kit.git", "1.0.0", {".claude/agents/team.md": "Team.\n"})})
+        result = self.agd("feedback", self.note("AGENTS.md and .claude/agents/team.md disagree.\n"))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agentic-defaults: AGENTS.md", result.stderr)
+        self.assertIn("team-kit: .claude/agents/team.md", result.stderr)
+        self.assertIn("Split the note", result.stderr)
+        result = self.agd("feedback", self.note("The agents ask too often.\n"))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("name a kit file", result.stderr)
+
+    def test_feedback_needs_a_lock_and_a_note(self):
+        result = self.agd("feedback", "note.md")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd init", result.stderr)
+        self.kit()
+        result = self.agd("feedback", "missing.md")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("missing.md", result.stderr)
+        result = self.agd("feedback")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd feedback notes.md", result.stderr)
+        self.assertIn("in a terminal", result.stderr)
+        self.assertNotIn(".local_context", result.stderr)
+
+    def test_without_a_note_agd_asks_and_builds_the_report_from_the_answers(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        self.kit()
+        before = self.snapshot()
+        # A wrong number and an empty answer are asked again.
+        answers = "9\n2\n\nIt wrote 40 tests for one function\nA few tests for what matters\n2"
+        result = self.agd_answering(answers, "feedback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"2) {self.REVIEWER}", result.stdout)
+        url = next(line for line in result.stdout.splitlines() if line.startswith("https://"))
+        query = parse_qs(urlsplit(url).query)
+        self.assertEqual(query["title"], ["It wrote 40 tests for one function"])
+        body = query["body"][0]
+        self.assertIn(f"- `{self.REVIEWER}` (as installed)\n", body)
+        for line in ("Outcome: partly done\n", "What went wrong: It wrote 40 tests for one function\n",
+                     "What I expected: A few tests for what matters\n"):
+            self.assertIn(line, body)
+        self.assertEqual(self.snapshot(), before)
+
+    def two_sources(self):
+        self.install({"agentic-defaults": (self.GITHUB, "0.4.0", {"AGENTS.md": "# Rules\n", self.REVIEWER: "Review.\n"}),
+                      "team-kit": ("https://github.com/acme/team-kit.git", "1.0.0", {".claude/agents/team.md": "Team.\n"})})
+
+    def link(self, result):
+        from urllib.parse import parse_qs, urlsplit
+
+        url = next(line for line in result.stdout.splitlines() if line.startswith("https://"))
+        parts = urlsplit(url)
+        return parts.path, parse_qs(parts.query)
+
+    def test_asked_for_several_files_by_number(self):
+        self.kit()
+        result = self.agd_answering("1, 3\nIt ignores both\n\n", "feedback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        body = self.link(result)[1]["body"][0]
+        self.assertIn("- `AGENTS.md` (as installed)\n- `.claude/skills/tdd/SKILL.md` (as installed)\n", body)
+        self.assertNotIn(self.REVIEWER, body)
+
+    def test_files_of_two_sources_are_asked_again(self):
+        self.two_sources()
+        result = self.agd_answering("1 3\n3\nTeam agent is slow\n\n", "feedback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("several sources", result.stdout)
+        path, query = self.link(result)
+        self.assertEqual(path, "/acme/team-kit/issues/new")
+        self.assertIn("- `.claude/agents/team.md` (as installed)\n", query["body"][0])
+
+    def test_not_sure_which_file_with_two_sources_asks_for_the_source(self):
+        self.two_sources()
+        result = self.agd_answering("\n5\n2\nSomething is off\n\n", "feedback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1) agentic-defaults", result.stdout)
+        self.assertIn("2) team-kit", result.stdout)
+        path, query = self.link(result)
+        self.assertEqual(path, "/acme/team-kit/issues/new")
+        self.assertIn("Kit files: none named\n", query["body"][0])
+        self.assertIn("Kit file: not sure\n", query["body"][0])
+
+    def fake_fzf(self, picks, code=0):
+        folder = pathlib.Path(self._tmp.name) / "fzf-bin"
+        log = pathlib.Path(self._tmp.name) / "fzf.log"
+        lines = "".join(f"echo '{pick}'\n" for pick in picks)
+        write(folder, "fzf", f'#!/bin/sh\nprintf "%s\\n" "$@" >"{log}"\ncat >"{log}.input"\n{lines}exit {code}\n')
+        (folder / "fzf").chmod(0o755)
+        self.env["PATH"] = f"{folder}:{self.env['PATH']}"
+        return log
+
+    def test_fzf_picks_the_files_when_it_is_installed(self):
+        log = self.fake_fzf(["AGENTS.md", self.REVIEWER])
+        self.kit()
+        result = self.agd_answering("Both are too long\n\n", "feedback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--multi", log.read_text().splitlines())
+        self.assertEqual(pathlib.Path(str(log) + ".input").read_text(),
+                         f"AGENTS.md\n{self.REVIEWER}\n.claude/skills/tdd/SKILL.md\n")
+        query = self.link(result)[1]
+        self.assertEqual(query["title"], ["Both are too long"])
+        self.assertIn(f"- `AGENTS.md` (as installed)\n- `{self.REVIEWER}` (as installed)\n", query["body"][0])
+
+    def test_leaving_fzf_means_not_sure(self):
+        self.fake_fzf([], code=130)
+        self.two_sources()
+        result = self.agd_answering("1\nSomething is off\n\n", "feedback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path, query = self.link(result)
+        self.assertEqual(path, "/Zejnilovic/agentic-defaults/issues/new")
+        self.assertIn("Kit file: not sure\n", query["body"][0])
+
+    def test_asked_without_a_kit_file_and_on_a_source_not_on_github(self):
+        self.kit(url="https://git.example.com/team/kit.git")
+        result = self.agd_answering("\nThe agents ask too often\n\n", "feedback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("isn't on GitHub", result.stdout)
+        self.assertIn("Title: The agents ask too often\n", result.stdout)
+        self.assertIn("Kit files: none named\n", result.stdout)
+        self.assertNotIn("Outcome:", result.stdout)
+        self.assertNotIn("What I expected:", result.stdout)
+
+    def test_without_gh_a_github_source_gets_a_prefilled_issue_link(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        self.kit(url="git@github.com:Zejnilovic/agentic-defaults.git")
+        note = self.note(self.NOTE.replace("partly", "partly «é» & 100%"))
+        before = self.snapshot()
+        result = self.agd("feedback", note)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Nothing is posted until you submit it", result.stdout)
+        url = next(line for line in result.stdout.splitlines() if line.startswith("https://"))
+        parts = urlsplit(url)
+        self.assertEqual(parts.netloc + parts.path, "github.com/Zejnilovic/agentic-defaults/issues/new")
+        query = parse_qs(parts.query, strict_parsing=True)
+        self.assertEqual(query["title"], ["The reviewer misses stale CONTEXT.md"])
+        self.assertEqual(query["body"], [self.body().replace("partly", "partly «é» & 100%")])
+        self.assertEqual(self.snapshot(), before)
+
+    def test_without_gh_a_long_note_gets_a_title_only_link_and_the_body_to_paste(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        self.kit()
+        long_note = self.NOTE + "Details.\n" * 1000
+        result = self.agd("feedback", self.note(long_note))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Paste this body", result.stdout)
+        url = next(line for line in result.stdout.splitlines() if line.startswith("https://"))
+        self.assertEqual(parse_qs(urlsplit(url).query), {"title": ["The reviewer misses stale CONTEXT.md"]})
+        self.assertIn(self.body().replace(self.NOTE, long_note), result.stdout)
+
+    def test_gh_opens_the_issue_in_the_browser_with_the_title_and_body(self):
+        log = self.fake_gh()
+        self.kit(url="https://github.com/Zejnilovic/agentic-defaults")
+        note = self.note()
+        before = self.snapshot()
+        result = self.agd("feedback", note)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Nothing is posted until you submit it", result.stdout)
+        args = log.read_text().splitlines()
+        self.assertEqual(args[:6], ["issue", "create", "--repo", "Zejnilovic/agentic-defaults", "--web", "--title"])
+        self.assertEqual(args[6:8], ["The reviewer misses stale CONTEXT.md", "--body-file"])
+        self.assertEqual(len(args), 9)
+        self.assertEqual(pathlib.Path(str(log) + ".body").read_text(), self.body())
+        self.assertEqual(self.snapshot(), before)
+
+    def test_gh_gets_only_the_title_of_a_long_note(self):
+        log = self.fake_gh()
+        self.kit(url="ssh://git@github.com/Zejnilovic/agentic-defaults.git")
+        result = self.agd("feedback", self.note(self.NOTE + "Details.\n" * 1000))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(log.read_text().splitlines(), ["issue", "create", "--repo", "Zejnilovic/agentic-defaults",
+                                                        "--web", "--title", "The reviewer misses stale CONTEXT.md"])
+        self.assertIn("Paste this body", result.stdout)
+        self.assertIn("Details.\n" * 1000, result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

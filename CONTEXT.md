@@ -66,4 +66,5 @@ Commands are in AGENTS.md "This project". The tests need only git, bash and Pyth
 
 - `.gitattributes` export-ignores the agentic setup, so the release archive (`git archive` in `release.yml`) holds agd only. `ReleaseTest.test_archive_leaves_out_the_agentic_setup` checks it.
 - `VERSION` and `version=` in `bin/agd` must match (`VersionTest`).
+- `agd feedback` never posts: it runs `gh issue create --web` or prints a link, because notes may hold private code. It finds the owner by matching lock paths in the note's text (`cmd_feedback`); without a note, `ask_feedback` turns terminal answers into one in `$tmp`, picking files with fzf when `command -v fzf` finds it. Its tests hide `gh` and `fzf` behind a `PATH` of symlinks and fake them when needed. Its tests write `.agd.lock` themselves.
 - The kit text above "## This project" in `AGENTS.md` mentions `` `## This project` `` inline; split on the heading line, not the first match.

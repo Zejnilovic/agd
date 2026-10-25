@@ -90,7 +90,7 @@ No Makefile yet; these are the real commands under the standard names.
 - Bash 3.2 (macOS) and Git Bash (Windows): no associative arrays, `mapfile` or `${var,,}`. Keep state in temporary files and line-based lists. The tests run the script with `/bin/bash` on macOS.
 - Only git and POSIX tools. Detect optional tools with `command -v`.
 - agd never runs code from a source. It only copies files.
-- Read-only commands (`status`, `diff`, `source list`) write nothing in the project. Commands that delete a project's text (`reset`) ask first, and need `--yes` without a terminal.
+- Read-only commands (`status`, `diff`, `source list`, `feedback`) write nothing in the project. Commands that delete a project's text (`reset`) ask first, and need `--yes` without a terminal.
 - `install.sh` follows the same rules. Its tests fake GitHub too.
 
 ### Docs

@@ -57,6 +57,10 @@ Yes, in Git Bash or WSL. See [Install](install.md#windows). Line endings don't c
 
 Every project on a machine shares the cache in `~/.cache/agd`. With `--offline`, agd works from it without fetching; each source must have been fetched once.
 
+## How do I report a problem with an agent or skill a source installed?
+
+Run `agd feedback` and answer its questions, or write what happened in a Markdown note that names the file, for example `.claude/agents/reviewer.md`, and run `agd feedback <note>`. agd finds the source that owns the file and opens a pre-filled issue on it, with the versions and whether you changed the file. You review it and submit it yourself; agd sends nothing. See [feedback](reference/commands.md#feedback).
+
 ## Something went wrong
 
 agd's messages say what to do next. The common ones:

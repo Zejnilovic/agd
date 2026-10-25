@@ -99,6 +99,54 @@ agd source remove <name>
 
 `list` shows each source with its version, URL and installed packs. `remove` removes a source and its files; files you changed stay, as project files. It refuses while another source's installed packs require the source.
 
+## feedback
+
+```text
+agd feedback [<note>]
+```
+
+Reports a problem with installed files to the source that owns them, as a GitHub issue you review before posting. `<note>` is a Markdown file anywhere, describing what went wrong, for example `notes.md`. Without a note, agd asks a few questions in the terminal instead. agd never posts anything itself.
+
+- **Which source.** agd looks for installed paths in the note, such as `.claude/agents/reviewer.md` (but not `reviewer.md.bak`), and sends the report to their source. A note that names no installed file goes to the only source; with several sources, name a file. A note that names files of two sources stops: split it.
+- **The issue.** The title is the note's first `# ` heading, or "Feedback on" the first file it names. The body lists the source and its version, the agd version, the OS, each named file and whether the project changed it, and then the note.
+- **With `gh` installed,** agd runs `gh issue create --web`, which opens the issue in your browser to edit and submit; if gh fails, for example before `gh auth login`, agd prints the link instead. **Without it,** agd prints a link to a pre-filled new issue. When the report is too long for a link, agd prints the body to paste and a link with only the title.
+- **A source not on GitHub** gets the title and body printed, with the source's URL.
+
+```text
+$ agd feedback notes.md
+Open this link to file the report on Zejnilovic/agentic-defaults. Nothing is posted until you submit it there.
+
+https://github.com/Zejnilovic/agentic-defaults/issues/new?title=The%20reviewer%20skips%20the%20context%20check&body=Source%3A%20agentic-defaults%200.4.0%0Aagd%3A%200.2.0%0AOS%3A%20Darwin%2025.6.0%0A...
+```
+
+### Without a note
+
+In a terminal, `agd feedback` asks which installed files the problem is about, what went wrong, which becomes the title, what you expected, and how the task ended. It builds the report from the answers and writes nothing in the project. Without a terminal, it stops and asks for a note.
+
+- **Picking files.** With [fzf](https://github.com/junegunn/fzf) installed, agd lets you search the installed files in fzf: Tab picks several, Enter confirms. Without it, agd lists them by number, and you type one or more, such as `5 7`.
+- **Files of two sources.** agd asks again: pick the files of one source, and report the others separately.
+- **Not sure which file.** Press Esc in fzf, or Enter at the numbers. With several sources installed, agd then asks which source the report is for.
+
+```text
+$ agd feedback
+Which kit files is it about?
+  1) .claude/agents/analyst.md
+  ...
+  7) .claude/agents/tester.md
+  ...
+  25) CLAUDE.md
+Numbers, such as 2 or 2 5, or Enter if you're not sure: 7
+What went wrong? One line; it becomes the title: It wrote 40 tests for one small function
+What did you expect? Enter to skip: A few tests for the behavior that matters
+How did the task end? 1) done, 2) partly done, 3) failed, Enter to skip: 2
+
+Open this link to file the report on Zejnilovic/agentic-defaults. Nothing is posted until you submit it there.
+
+https://github.com/Zejnilovic/agentic-defaults/issues/new?title=It%20wrote%2040%20tests%20for%20one%20small%20function&body=Source%3A%20agentic-defaults%200.4.0%0A...
+```
+
+Notes and answers can hold private code or names. Read the issue before you submit it.
+
 ## Environment
 
 | Variable | Does |

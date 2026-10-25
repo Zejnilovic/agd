@@ -22,6 +22,9 @@
 #                             the "This project" section of AGENTS.md; asks first, unless --yes
 #   source list               list the sources here, with their versions and packs
 #   source remove <name>      remove a source; files you changed stay, as yours
+#   feedback [<note>]         report a problem with kit files to the source that owns them: opens a
+#                             pre-filled issue in the browser with gh, or prints its link; posts nothing.
+#                             Without a note, asks a few questions in the terminal
 #   -C <dir>                work in <dir> instead of the current folder
 #   --offline                 use the cached copy of each source instead of fetching it
 #   --version, --help
@@ -35,7 +38,7 @@
 # Docs: https://zejnilovic.github.io/agd
 
 set -u
-version=0.1.2
+version=0.2.0
 default_name=agentic-defaults
 default_url=${AGD_SOURCE:-https://github.com/Zejnilovic/agentic-defaults.git}
 cache_root=${AGD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/agd}
@@ -73,7 +76,7 @@ done
 case "$command" in
   diff|merge) [ -n "$arg" ] || die "agd $command needs a path, for example agd $command .claude/agents/reviewer.md" ;;
   add|remove) [ -n "$arg" ] || die "agd $command needs a pack, for example agd $command flask" ;;
-  init|reset|adopt) ;;
+  init|reset|adopt|feedback) ;;
   source)
     case "$arg" in
       list) [ -z "$arg2" ] || die "unexpected argument $arg2 (see agd --help)" ;;
@@ -1066,8 +1069,203 @@ cmd_reset() {
   echo "Reset $(count "$n" file). Review the changes with git diff, and commit $lock_file with them."
 }
 
+github_repo() { # <url>: prints owner/repo for a GitHub URL, or fails
+  printf '%s\n' "${1%/}" | sed -n -E 's#^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$#\2#p' \
+    | sed 's/\.git$//' | grep .
+}
+
+encode() { # <file>: its bytes percent-encoded for a URL query
+  LC_ALL=C od -An -v -tx1 "$1" | awk '
+    BEGIN { for (i = 0; i < 256; i++) code[sprintf("%02x", i)] = i }
+    { for (f = 1; f <= NF; f++) {
+        c = code[$f]
+        if ((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 46 || c == 95 || c == 126)
+          printf "%c", c
+        else printf "%%%s", toupper($f)
+    } }'
+}
+
+ask_number() { # <largest>: reads a number from 1 to <largest> into $pick, asking again until it gets one
+  while :; do
+    printf 'Number: '
+    read -r pick || die "no answer, so no report"
+    case "$pick" in
+      ""|*[!0-9]*) ;;
+      *) [ "$pick" -lt 1 ] || [ "$pick" -gt "$1" ] || return 0 ;;
+    esac
+    echo "Type a number from 1 to $1."
+  done
+}
+
+pick_kit_files() { # writes the kit files the problem is about to $tmp/picked, one per line; none when not sure
+  local n pick i bad
+  n=$(wc -l <"$tmp/kit-files" | tr -d ' ')
+  if command -v fzf >/dev/null 2>&1; then
+    awk '{ print $1 }' "$tmp/kit-files" \
+      | fzf --multi --prompt 'Kit file> ' \
+          --header "Which kit files is it about? Tab picks several, Enter confirms, Esc if you're not sure" \
+          >"$tmp/picked" || : >"$tmp/picked"
+    return 0
+  fi
+  echo "Which kit files is it about?"
+  awk '{ printf "  %d) %s\n", NR, $1 }' "$tmp/kit-files"
+  while :; do
+    printf "Numbers, such as 2 or 2 5, or Enter if you're not sure: "
+    read -r pick || die "no answer, so no report"
+    pick=$(printf '%s' "$pick" | tr ',' ' ')
+    bad=0
+    for i in $pick; do
+      case "$i" in
+        *[!0-9]*) bad=1 ;;
+        *) [ "$i" -ge 1 ] && [ "$i" -le "$n" ] || bad=1 ;;
+      esac
+    done
+    [ "$bad" = 0 ] && break
+    echo "Type numbers from 1 to $n."
+  done
+  for i in $pick; do sed -n "${i}p" "$tmp/kit-files"; done | awk '!seen[$1]++ { print $1 }' >"$tmp/picked"
+}
+
+ask_feedback() { # asks about the problem, and writes the answers as a note to $tmp/note.md
+  local n pick wrong="" expected outcome
+  awk '$1 == "file" { print $3, $2 }' "$project/$lock_file" >"$tmp/kit-files"
+  while :; do
+    pick_kit_files
+    awk 'NR == FNR { p[$1] = 1; next } $1 in p { print $2 }' "$tmp/picked" "$tmp/kit-files" | sort -u >"$tmp/picked-sources"
+    [ "$(wc -l <"$tmp/picked-sources" | tr -d ' ')" -gt 1 ] || break
+    echo "Those files come from several sources: $(tr '\n' ' ' <"$tmp/picked-sources")"
+    echo "Pick the files of one source, and report the others separately."
+  done
+  sources | awk '{ print $1 }' >"$tmp/all-sources"
+  n=$(wc -l <"$tmp/all-sources" | tr -d ' ')
+  if [ ! -s "$tmp/picked" ] && [ "$n" -gt 1 ]; then
+    echo "Which source is it about?"
+    sources | awk '{ printf "  %d) %s (%s)\n", NR, $1, $2 }'
+    ask_number "$n"
+    chosen_source=$(sed -n "${pick}p" "$tmp/all-sources")
+  fi
+  while [ -z "$wrong" ]; do
+    printf 'What went wrong? One line; it becomes the title: '
+    read -r wrong || die "no answer, so no report"
+  done
+  printf 'What did you expect? Enter to skip: '
+  read -r expected || expected=""
+  printf 'How did the task end? 1) done, 2) partly done, 3) failed, Enter to skip: '
+  read -r outcome || outcome=""
+  case "$outcome" in 1) outcome=done ;; 2) outcome="partly done" ;; 3) outcome=failed ;; *) outcome="" ;; esac
+  {
+    printf '# %s\n\n' "$wrong"
+    [ -z "$outcome" ] || printf 'Outcome: %s\n\n' "$outcome"
+    if [ -s "$tmp/picked" ]; then
+      printf 'Kit files: %s\n\n' "$(awk '{ printf "%s`%s`", (NR > 1 ? ", " : ""), $0 }' "$tmp/picked")"
+    else
+      printf 'Kit file: not sure\n\n'
+    fi
+    printf 'What went wrong: %s\n' "$wrong"
+    [ -z "$expected" ] || printf '\nWhat I expected: %s\n' "$expected"
+  } >"$tmp/note.md"
+  echo
+}
+
+cmd_feedback() {
+  need_lock
+  local note=$arg what=${arg:-"Your answers"} chosen_source="" name url ver repo title first link path blob state len=8000
+  if [ -z "$note" ]; then
+    [ -t 0 ] || die "agd feedback needs a note, such as agd feedback notes.md, or run it in a terminal to answer a few questions"
+    ask_feedback
+    note=$tmp/note.md
+  else
+    [ -f "$note" ] || note=$project/$arg
+    [ -f "$note" ] || die "no note $arg"
+  fi
+  # The kit files the note names: their paths, not as part of a longer path such as AGENTS.md.orig.
+  awk 'NR == FNR { text = text $0 "\n"; next }
+    $1 == "file" {
+      rest = text
+      while ((i = index(rest, $3)) > 0) {
+        before = i > 1 ? substr(rest, i - 1, 1) : ""
+        after = substr(rest, i + length($3), 2)
+        if (before !~ /[A-Za-z0-9_.\/-]/ && after !~ /^([A-Za-z0-9_\/-]|\.[A-Za-z0-9_])/) { print $2, $3, $4; break }
+        rest = substr(rest, i + 1)
+      }
+    }' "$note" "$project/$lock_file" >"$tmp/named"
+  awk '{ print $1 }' "$tmp/named" | sort -u >"$tmp/owners"
+  case $(wc -l <"$tmp/owners" | tr -d ' ') in
+    0)
+      if [ -n "$chosen_source" ]; then echo "$chosen_source"; else sources | awk '{ print $1 }'; fi >"$tmp/owners"
+      [ "$(wc -l <"$tmp/owners" | tr -d ' ')" = 1 ] \
+        || die "$what names no kit file, and several sources are installed: name a kit file so agd knows whose it is" ;;
+    1) ;;
+    *)
+      {
+        echo "agd: $what names kit files of several sources:"
+        awk '{ f[$1] = f[$1] (f[$1] == "" ? "" : ", ") $2 } END { for (s in f) print "  " s ": " f[s] }' "$tmp/named" | sort
+        echo "Split the note, one for each source, and send each with agd feedback."
+      } >&2
+      exit 2 ;;
+  esac
+  name=$(cat "$tmp/owners")
+  read -r url ver <<EOF
+$(source_line "$name")
+EOF
+  # The first "# " heading outside code blocks.
+  title=$(awk '{ sub(/\r$/, "") } /^(```|~~~)/ { fence = !fence; next }
+    !fence && /^# / { sub(/^# +/, ""); sub(/[ \t]+$/, ""); if ($0 != "") { print; exit } }' "$note")
+  first=$(awk 'NR == 1 { print $2 }' "$tmp/named")
+  [ -n "$title" ] || title="Feedback on ${first:-$name $(label "$ver")}"
+  {
+    echo "Source: $name $(label "$ver")"
+    echo "agd: $version"
+    echo "OS: $(uname -sr)"
+    echo
+    if [ -s "$tmp/named" ]; then
+      printf 'Kit files:\n\n'
+      while read -r _ path blob; do
+        if [ ! -f "$project/$path" ]; then state="missing in the project"
+        elif [ "$(git hash-object "$project/$path")" = "$blob" ]; then state="as installed"
+        else state="changed in the project"
+        fi
+        echo "- \`$path\` ($state)"
+      done <"$tmp/named"
+    else
+      echo "Kit files: none named"
+    fi
+    printf '\n---\n\n'
+    cat "$note"
+  } >"$tmp/body"
+  if ! repo=$(github_repo "$url"); then
+    echo "$name ($url) isn't on GitHub, so agd can't open an issue there. Send its maintainers this report:"
+    printf '\nTitle: %s\n\n' "$title"
+    cat "$tmp/body"
+    return
+  fi
+  printf '%s' "$title" >"$tmp/title"
+  link="https://github.com/$repo/issues/new?title=$(encode "$tmp/title")"
+  if [ $((${#link} + 6 + $(encode "$tmp/body" | wc -c))) -gt "$len" ]; then
+    echo "The report is too long for a link. Paste this body into the new issue on $repo:"
+    echo
+    cat "$tmp/body"
+    echo
+    set -- --title "$title"
+  else
+    link="$link&body=$(encode "$tmp/body")"
+    set -- --title "$title" --body-file "$tmp/body"
+  fi
+  if command -v gh >/dev/null 2>&1; then
+    echo "Opening a new issue on $repo in your browser. Nothing is posted until you submit it there."
+    gh issue create --repo "$repo" --web "$@" && return
+    echo
+    echo "gh couldn't open the issue. Open this link instead; nothing is posted until you submit it there."
+  else
+    echo "Open this link to file the report on $repo. Nothing is posted until you submit it there."
+  fi
+  echo
+  echo "$link"
+}
+
 case "$command" in
   init) cmd_init ;;
+  feedback) cmd_feedback ;;
   adopt) cmd_adopt ;;
   status) cmd_status ;;
   update) cmd_update ;;
