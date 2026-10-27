@@ -41,6 +41,10 @@ In GitHub Actions, give git a token that can read the source before you run agd:
 git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
 ```
 
+## Does agd work behind a company mirror or proxy?
+
+Yes, since it fetches with git: `url.<mirror>.insteadOf` and git's proxy settings apply to it, and `--offline` works from a cache copied from a connected machine. [Mirrors, proxies and offline machines](guides/company-networks.md) has each recipe, and how to install agd there.
+
 ## Do I have to use agentic-defaults?
 
 No. `agd init your-org/your-setup` installs any source, without agentic-defaults. To make another source the default for `agd init` and `agd adopt`, set `AGD_SOURCE` to its URL.
@@ -55,7 +59,7 @@ Yes, in Git Bash or WSL. See [Install](install.md#windows). Line endings don't c
 
 ## Can several projects share a cache, or work without a network?
 
-Every project on a machine shares the cache in `~/.cache/agd`. With `--offline`, agd works from it without fetching; each source must have been fetched once.
+Every project on a machine shares the cache in `~/.cache/agd`. With `--offline`, agd works from it without fetching; each source must have been fetched once. A machine without a network can use a cache copied from another: see [offline machines](guides/company-networks.md#a-machine-without-a-network).
 
 ## How do I report a problem with an agent or skill a source installed?
 

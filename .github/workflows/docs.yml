@@ -2,12 +2,13 @@ name: Docs
 
 # Builds the documentation site from docs/ and mkdocs.yml, and publishes it to GitHub Pages from main.
 # Pull requests only build it; --strict fails the build on a broken link.
+# agd-update.yml is in the paths because docs/guides/automatic-updates.md includes it.
 on:
   push:
     branches: [main]
-    paths: [docs/**, mkdocs.yml, .github/workflows/docs.yml]
+    paths: [docs/**, mkdocs.yml, .github/workflows/docs.yml, .github/workflows/agd-update.yml]
   pull_request:
-    paths: [docs/**, mkdocs.yml, .github/workflows/docs.yml]
+    paths: [docs/**, mkdocs.yml, .github/workflows/docs.yml, .github/workflows/agd-update.yml]
   workflow_dispatch:
 
 permissions:

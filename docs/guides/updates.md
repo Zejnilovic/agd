@@ -73,7 +73,7 @@ jobs:
         run: agd status --check
 ```
 
-A failed run means an update is due; its log shows what `agd update` would do. For a private source, give git a token first, as [the FAQ shows](../faq.md#can-a-source-be-private).
+A failed run means an update is due; its log shows what `agd update` would do. For a private source, give git a token first, as [the FAQ shows](../faq.md#can-a-source-be-private). To have the workflow run the update and open a pull request too, see [Keep projects up to date automatically](automatic-updates.md).
 
 ## Work offline
 
@@ -83,4 +83,4 @@ agd keeps a bare clone of each source in `~/.cache/agd`. With `--offline`, it us
 agd status --offline
 ```
 
-The source must have been fetched once on this machine.
+The source must have been fetched once on this machine. To fill the cache for a machine without a network, see [Mirrors, proxies and offline machines](company-networks.md#a-machine-without-a-network).

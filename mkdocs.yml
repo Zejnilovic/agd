@@ -69,9 +69,11 @@ nav:
   - Guides:
       - Choose packs: guides/packs.md
       - Keep it up to date: guides/updates.md
+      - Update automatically: guides/automatic-updates.md
       - Make files your own: guides/your-changes.md
       - Combine sources: guides/combine-sources.md
       - Adopt a copy: guides/adopt.md
+      - Mirrors, proxies and offline: guides/company-networks.md
       - Publish your own setup: sources.md
   - Reference:
       - Commands: reference/commands.md
@@ -91,6 +93,9 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
+  # Includes files of the repository, such as the workflow in guides/automatic-updates.md, so the page shows them as they are.
+  - pymdownx.snippets:
+      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

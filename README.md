@@ -103,7 +103,8 @@ Commit `.agd.lock` with the files, so your team gets the same setup. The [quick 
 
 - [How agd works](https://zejnilovic.github.io/agd/concepts/): the idea, the words it uses, and what an update does to each file.
 - [Make installed files your own](https://zejnilovic.github.io/agd/guides/your-changes/): project parts, edits, and settling them.
-- [Keep it up to date](https://zejnilovic.github.io/agd/guides/updates/), with a weekly check in CI.
+- [Keep it up to date](https://zejnilovic.github.io/agd/guides/updates/), and [automatically](https://zejnilovic.github.io/agd/guides/automatic-updates/), with a weekly pull request from CI.
+- [Mirrors, proxies and offline machines](https://zejnilovic.github.io/agd/guides/company-networks/): agd on company networks.
 - [Combine sources](https://zejnilovic.github.io/agd/guides/combine-sources/): your team's setup on top of agentic-defaults.
 - [Publish your own agentic setup](docs/sources.md): the layout, `packs.txt`, releases.
 - [FAQ](https://zejnilovic.github.io/agd/faq/)

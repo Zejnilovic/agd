@@ -19,8 +19,8 @@ Not responsible for: the kit content itself (it lives in each source, for exampl
 - `install.sh`: installs or updates `bin/agd` from a GitHub release into a folder on `PATH`.
 - `tests/test_agd.py`: all tests: version and release scripts, `install.sh`, then one class per agd command area (`AgdInitTest`, `AgdUpdateTest`, ...), built on `AgdCase`.
 - `scripts/`: `bump.sh` (start a version), `release.sh` (date the changelog entry, write notes), `formula.sh` (print the Homebrew formula). Run by the maintainer and the Release workflow.
-- `docs/`, `mkdocs.yml`: the site for people. `docs/reference/commands.md` and `docs/reference/files.md` describe commands and files.
-- `.github/workflows/`: `check.yml` (syntax and tests on Linux and macOS), `docs.yml` (site), `release.yml` (release).
+- `docs/`, `mkdocs.yml`: the site for people. `docs/reference/commands.md` and `docs/reference/files.md` describe commands and files. A page includes a repository file with `--8<-- "<path from the root>"` (`pymdownx.snippets`; a missing path fails the build).
+- `.github/workflows/`: `check.yml` (syntax and tests on Linux and macOS), `docs.yml` (site), `release.yml` (release), `agd-update.yml` (weekly `agd update` of this repository's setup with a pinned agd release, as a pull request; `docs/guides/automatic-updates.md` includes it, so keep it copyable by any project).
 - `.claude/`, `.local_context/`, `AGENTS.md`, `CLAUDE.md`, `.agd.lock`: this repository's own agentic setup, installed by agd from agentic-defaults.
 
 ## How it fits together
