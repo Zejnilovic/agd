@@ -58,6 +58,28 @@ The install script and the steps by hand use `~/.local/bin`, which many Linux sy
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+## Tab completion
+
+Tab completes agd's commands, options, packs, installed paths and releases. Homebrew sets it up for you, when your shell loads Homebrew's completions. Otherwise, add a line to your shell's profile, then open a new terminal:
+
+=== "zsh"
+
+    In `~/.zshrc`, after `compinit` runs (frameworks such as Oh My Zsh run it):
+
+    ```bash
+    source <(agd completion zsh)
+    ```
+
+    Without a framework, run `compinit` first: `autoload -Uz compinit && compinit`.
+
+=== "bash"
+
+    In `~/.bashrc` (on macOS, `~/.bash_profile`):
+
+    ```bash
+    source <(agd completion bash)
+    ```
+
 ## The install script
 
 [`install.sh`](https://github.com/Zejnilovic/agd/blob/main/install.sh) is short, and you can read it before you run it:

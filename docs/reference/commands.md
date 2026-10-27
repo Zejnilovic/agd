@@ -147,6 +147,15 @@ https://github.com/Zejnilovic/agentic-defaults/issues/new?title=It%20wrote%2040%
 
 Notes and answers can hold private code or names. Read the issue before you submit it.
 
+## completion
+
+```text
+agd completion bash
+agd completion zsh
+```
+
+Prints the shell's tab completion script. It completes commands and options; from the project's `.agd.lock`, the packs to add or remove, installed paths for `diff`, `merge` and `reset`, and source names; and the releases for `update --to` and `init <source>@`, which it asks each source for with `git ls-remote`, for up to 3 seconds, adding the cached ones. With `--offline`, it offers only the cached releases. Completing writes nothing, not even to the cache, so it doesn't offer the packs of a source that isn't installed yet. Homebrew installs the scripts; otherwise [turn it on in your shell](../install.md#tab-completion).
+
 ## Environment
 
 | Variable | Does |

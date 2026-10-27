@@ -108,7 +108,9 @@ class ReleaseTest(unittest.TestCase):
         formula = result.stdout
         for expected in ("class Agd < Formula",
                          'url "https://github.com/Zejnilovic/agd/releases/download/v0.1.0/agd-0.1.0.tar.gz"',
-                         f'sha256 "{"ab" * 32}"', 'license "MIT"', 'bin.install "bin/agd"', "agd --version"):
+                         f'sha256 "{"ab" * 32}"', 'license "MIT"', 'bin.install "bin/agd"',
+                         'generate_completions_from_executable(bin/"agd", "completion", shells: [:bash, :zsh])',
+                         "agd --version"):
             self.assertIn(expected, formula)
         if shutil.which("ruby"):
             write(self.root, "agd.rb", formula)
@@ -1572,6 +1574,105 @@ class AgdFeedbackTest(AgdCase):
                                                         "--web", "--title", "The reviewer misses stale CONTEXT.md"])
         self.assertIn("Paste this body", result.stdout)
         self.assertIn("Details.\n" * 1000, result.stdout)
+
+
+class AgdCompletionTest(AgdCase):
+    """agd completion prints shell scripts that ask agd __complete for the candidates."""
+
+    def setUp(self):
+        super().setUp()
+        self.release("1.0.0")
+        self.release("1.1.0")
+        self.assertEqual(self.agd("init", "--with", "flask").returncode, 0)
+        # The scripts run agd from the PATH.
+        self.bin = pathlib.Path(self._tmp.name) / "bin"
+        self.bin.mkdir()
+        (self.bin / "agd").symlink_to(AGD)
+        self.env["PATH"] = f"{self.bin}{os.pathsep}{self.env['PATH']}"
+
+    def complete(self, *words, cwd=None):
+        """The candidates for the last word, after the words before it."""
+        result = subprocess.run([BASH, str(AGD), "__complete", *words], cwd=cwd or self.project, env=self.env,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return sorted(result.stdout.split())
+
+    def test_offers_commands_then_their_options(self):
+        commands = self.complete("")
+        for command in ("init", "status", "update", "add", "remove", "diff", "source", "feedback", "completion"):
+            self.assertIn(command, commands)
+        self.assertNotIn("__complete", commands)
+        self.assertEqual(self.complete("-"), ["--help", "--offline", "--version", "-C"])
+        self.assertEqual(self.complete("status", "--"), ["--check", "--offline"])
+        self.assertEqual(self.complete("completion", ""), ["bash", "zsh"])
+        self.assertEqual(self.complete("source", ""), ["list", "remove"])
+
+    def test_offers_the_packs_paths_sources_and_releases_of_the_project(self):
+        self.assertEqual(self.complete("add", ""), ["react"])
+        self.assertEqual(self.complete("remove", ""), ["core", "flask"])
+        self.assertEqual(self.complete("remove", "agentic-defaults:"), ["agentic-defaults:core", "agentic-defaults:flask"])
+        self.assertIn(".claude/agents/flask-developer.md", self.complete("diff", ""))
+        self.assertIn("AGENTS.md", self.complete("reset", "--yes", ""))
+        self.assertEqual(self.complete("source", "remove", ""), ["agentic-defaults"])
+        self.assertEqual(self.complete("update", "--to", ""), ["1.0.0", "1.1.0"])
+        self.assertEqual(self.complete("update", "--to="), ["--to=1.0.0", "--to=1.1.0"])
+
+    def test_asks_any_source_for_its_releases(self):
+        src = str(self.source)
+        self.env["AGD_CACHE"] = str(pathlib.Path(self._tmp.name) / "empty-cache")
+        self.assertEqual(self.complete("init", f"{src}@"), [f"{src}@1.0.0", f"{src}@1.1.0"])
+        self.assertEqual(self.complete("init", "./missing@"), [])
+        # Packs would need the source's files, which agd doesn't fetch to complete.
+        self.assertEqual(self.complete("init", src, "--with", ""), [])
+
+    def test_reads_the_project_named_by_dash_c(self):
+        elsewhere = pathlib.Path(self._tmp.name)
+        self.assertEqual(self.complete("-C", str(self.project), "remove", "", cwd=elsewhere), ["core", "flask"])
+        self.assertEqual(self.complete("remove", "", cwd=elsewhere), [])
+        self.assertEqual(self.complete("-C", ""), [":dirs"])
+
+    def test_offers_new_releases_without_fetching_or_writing(self):
+        def snapshot():
+            return sorted(str(p) for root in (self.project, self.cache) for p in root.rglob("*"))
+
+        before = snapshot()
+        self.release("1.2.0")
+        self.assertEqual(self.complete("update", "--to", ""), ["1.0.0", "1.1.0", "1.2.0"])
+        self.assertEqual(self.complete("--offline", "update", "--to", ""), ["1.0.0", "1.1.0"])
+        self.assertEqual(snapshot(), before)
+
+    def test_bash_script_completes_through_agd(self):
+        script = self.agd("completion", "bash")
+        self.assertEqual(script.returncode, 0, script.stderr)
+
+        def tab(line):
+            shell = (f'{script.stdout}\nCOMP_LINE="{line}"; COMP_POINT=${{#COMP_LINE}}; _agd\n'
+                     'printf "%s\\n" "${COMPREPLY[@]}"')
+            result = subprocess.run([BASH, "-c", shell], cwd=self.project, env=self.env, capture_output=True,
+                                    text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return sorted(result.stdout.split())
+
+        self.assertIn("complete -F _agd agd", script.stdout)
+        self.assertEqual(tab("agd sta"), ["status"])
+        self.assertEqual(tab("agd remove "), ["core", "flask"])
+        # bash splits words at : and =, so it gets only what comes after them.
+        self.assertEqual(tab("agd remove agentic-defaults:fl"), ["flask"])
+        self.assertEqual(tab("agd update --to=1.1"), ["1.1.0"])
+
+    def test_zsh_script_is_valid(self):
+        script = self.agd("completion", "zsh")
+        self.assertEqual(script.returncode, 0, script.stderr)
+        self.assertTrue(script.stdout.startswith("#compdef agd\n"))
+        if shutil.which("zsh"):
+            write(self.project, "_agd", script.stdout)
+            check = subprocess.run(["zsh", "-n", str(self.project / "_agd")], capture_output=True, text=True)
+            self.assertEqual(check.returncode, 0, check.stderr)
+
+    def test_needs_a_known_shell(self):
+        result = self.agd("completion", "fish")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("bash or zsh", result.stderr)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,8 @@
 #   feedback [<note>]         report a problem with kit files to the source that owns them: opens a
 #                             pre-filled issue in the browser with gh, or prints its link; posts nothing.
 #                             Without a note, asks a few questions in the terminal
+#   completion <bash|zsh>     print the shell's tab completion script, for example for ~/.zshrc:
+#                             source <(agd completion zsh)
 #   -C <dir>                work in <dir> instead of the current folder
 #   --offline                 use the cached copy of each source instead of fetching it
 #   --version, --help
@@ -38,7 +40,7 @@
 # Docs: https://zejnilovic.github.io/agd
 
 set -u
-version=0.2.0
+version=0.3.0
 default_name=agentic-defaults
 default_url=${AGD_SOURCE:-https://github.com/Zejnilovic/agentic-defaults.git}
 cache_root=${AGD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/agd}
@@ -51,7 +53,9 @@ die() { echo "agd: $*" >&2; exit 2; }
 count() { if [ "$1" = 1 ]; then echo "1 $2"; else echo "$1 $2s"; fi; }
 
 dir=. offline=0 command="" arg="" arg2="" with="" to="" check=0 yes=0
-while [ $# -gt 0 ]; do
+# agd __complete, run by the completion scripts, reads its words in cmd_complete.
+[ "${1:-}" != __complete ] || command=__complete
+while [ "$command" != __complete ] && [ $# -gt 0 ]; do
   case "$1" in
     -C) [ $# -ge 2 ] || die "-C needs a folder"; dir=$2; shift ;;
     --offline) offline=1 ;;
@@ -76,7 +80,7 @@ done
 case "$command" in
   diff|merge) [ -n "$arg" ] || die "agd $command needs a path, for example agd $command .claude/agents/reviewer.md" ;;
   add|remove) [ -n "$arg" ] || die "agd $command needs a pack, for example agd $command flask" ;;
-  init|reset|adopt|feedback) ;;
+  init|reset|adopt|feedback|completion|__complete) ;;
   source)
     case "$arg" in
       list) [ -z "$arg2" ] || die "unexpected argument $arg2 (see agd --help)" ;;
@@ -1263,6 +1267,160 @@ EOF
   echo "$link"
 }
 
+# Tab completion. The script agd completion prints runs agd __complete <words before the cursor> <word at the
+# cursor>, which prints the candidates, one a line, or :dirs or :files for the shell to complete paths itself.
+# It reads the lock, the cache and a source's tags, and writes nothing: it offers only what any source has without
+# fetching it, so no packs of a source that isn't installed.
+cmd_completion() {
+  case "$arg" in
+    bash) cat <<'EOF'
+# bash completion for agd, printed by agd completion bash.
+_agd() {
+  local line=${COMP_LINE:0:COMP_POINT} cur="" trim out word
+  local -a words
+  # Split on spaces only: bash also splits at : and =, which source:pack and --to=<version> contain.
+  case "$line" in *[[:space:]]) ;; *) cur=${line##*[[:space:]]} ;; esac
+  read -r -a words <<<"${line%"$cur"}"
+  out=$(command agd __complete "${words[@]:1}" "$cur" 2>/dev/null)
+  COMPREPLY=()
+  case "$out" in
+    :dirs) compopt -o filenames 2>/dev/null; COMPREPLY=($(compgen -d -- "$cur")); return ;;
+    :files) compopt -o filenames 2>/dev/null; COMPREPLY=($(compgen -f -- "$cur")); return ;;
+  esac
+  # bash replaces only the part of the word after its last : or =.
+  trim=${cur%"${cur##*[:=]}"}
+  while IFS= read -r word; do
+    case "$word" in "$cur"?*) COMPREPLY+=("${word#"$trim"}") ;; esac
+  done <<<"$out"
+}
+complete -F _agd agd
+EOF
+      ;;
+    zsh) cat <<'EOF'
+#compdef agd
+# zsh completion for agd, printed by agd completion zsh.
+_agd() {
+  local -a out
+  out=("${(@f)$(command agd __complete "${(@)words[2,CURRENT-1]}" "${words[CURRENT]}" 2>/dev/null)}")
+  case $out[1] in
+    :dirs) _files -/ ;;
+    :files) _files ;;
+    *) compadd -- "${(@)out:#}" ;;
+  esac
+}
+if [ "$funcstack[1]" = _agd ]; then _agd "$@"; else compdef _agd agd; fi
+EOF
+      ;;
+    *) die "agd completion needs bash or zsh, for example: source <(agd completion zsh)" ;;
+  esac
+}
+
+complete_packs() { # <installed|available> <word at the cursor>: the packs of the lock's sources, as <source>:<pack>
+  # where two share a name or the word has a :
+  local name url v all=0
+  [ -f "$project/$lock_file" ] || return 0
+  case "$2" in *:*) all=1 ;; esac
+  awk '$1 == "source" { print $2, $3, $4 }' "$project/$lock_file" | while read -r name url v; do
+    if [ "$1" = installed ]; then
+      awk -v s="$name" '$1 == "pack" && $2 == s { print s, $3 }' "$project/$lock_file"
+    else
+      pack_names "$(cache_of "$url")" "$v" | while read -r p; do
+        awk -v s="$name" -v p="$p" '$1 == "pack" && $2 == s && $3 == p { found = 1 } END { exit found }' \
+          "$project/$lock_file" && echo "$name $p"
+      done
+    fi
+  done | awk -v all="$all" '{ source[NR] = $1; pack[NR] = $2; n[$2]++ }
+    END { for (i = 1; i <= NR; i++) print (all == 1 || n[pack[i]] > 1 ? source[i] ":" : "") pack[i] }'
+}
+
+live_releases() { # <url>: the source's releases, from git ls-remote, or only the cached ones when --offline or it
+  # doesn't answer within 3 seconds
+  local pid watch
+  { releases "$(cache_of "$1")" 2>/dev/null
+    [ "$offline" = 0 ] || return 0
+    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes" \
+      git ls-remote --tags --refs "$1" 'v*' >"$tmp/remote" 2>/dev/null </dev/null &
+    pid=$!
+    # A tab press must not hang on a slow or unreachable source; the watcher must not hold the shell's output open.
+    (sleep 3; kill "$pid") >/dev/null 2>&1 &
+    watch=$!
+    wait "$pid"
+    kill "$watch" 2>/dev/null
+    sed -n 's#^[0-9a-f]*[[:space:]]*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' "$tmp/remote"
+  } 2>/dev/null | sort -u -t. -k1,1n -k2,2n -k3,3n
+}
+
+pack_names() { # <cache> <version>: the packs of a release
+  if git -C "$1" show "$(treeish "$2"):packs.txt" >"$tmp/complete.packs" 2>/dev/null </dev/null; then
+    awk '/^[ \t]/ { next } $1 == "pack" { print $2 }' "$tmp/complete.packs"
+  else
+    echo core
+  fi
+}
+
+cmd_complete() { # <word>... <word at the cursor>
+  local want="" cmd="" n=0 first="" cur prefix="" url
+  while [ $# -gt 1 ]; do
+    if [ -n "$want" ]; then
+      [ "$want" != -C ] || dir=$1
+      want=""
+    else
+      case "$1" in
+        -C|--with|--to) want=$1 ;;
+        --offline) offline=1 ;;
+        -*) ;;
+        *) if [ -z "$cmd" ]; then cmd=$1; else n=$((n + 1)); [ "$n" != 1 ] || first=$1; fi ;;
+      esac
+    fi
+    shift
+  done
+  cur=${1:-}
+  case "$dir" in "~"|"~/"*) dir=$HOME${dir#"~"} ;; esac
+  project=$(cd "$dir" 2>/dev/null && pwd) || return 0
+  case "$cur" in --with=*|--to=*) want=${cur%%=*}; prefix=$want=; cur=${cur#*=} ;; esac
+
+  case "$want" in
+    -C) echo :dirs; return ;;
+    --to)
+      [ -f "$project/$lock_file" ] || return 0
+      awk '$1 == "source" { print $3 }' "$project/$lock_file" | while read -r url; do
+        live_releases "$url"
+      done | sort -u | sed "s/^/$prefix/"
+      return ;;
+    --with) return ;;
+  esac
+
+  case "$cur" in
+    -*)
+      case "$cmd" in
+        "") echo -C --offline --version --help ;;
+        init) echo -C --offline --with --yes ;;
+        status) echo --offline --check ;;
+        update) echo -C --offline --to ;;
+        reset) echo -C --offline --yes ;;
+        *) echo -C --offline ;;
+      esac | tr ' ' '\n'
+      return ;;
+  esac
+  case "$cmd:$n" in
+    :0) printf '%s\n' init adopt status update add remove diff merge reset source feedback completion ;;
+    init:0|adopt:0)
+      case "$cur" in
+        *@*)
+          url=$(resolve_source "${cur%%@*}" | cut -d' ' -f2-) || return 0
+          live_releases "$url" | sed "s#^#${cur%%@*}@#" ;;
+        *) echo :dirs ;;
+      esac ;;
+    add:0) complete_packs available "$cur" ;;
+    remove:0) complete_packs installed "$cur" ;;
+    diff:0|merge:0|reset:0) [ ! -f "$project/$lock_file" ] || awk '$1 == "file" { print $3 }' "$project/$lock_file" ;;
+    source:0) printf '%s\n' list remove ;;
+    source:1) [ "$first" != remove ] || [ ! -f "$project/$lock_file" ] || awk '$1 == "source" { print $2 }' "$project/$lock_file" ;;
+    feedback:0) echo :files ;;
+    completion:0) printf '%s\n' bash zsh ;;
+  esac
+}
+
 case "$command" in
   init) cmd_init ;;
   feedback) cmd_feedback ;;
@@ -1275,6 +1433,8 @@ case "$command" in
   diff) cmd_diff ;;
   merge) cmd_merge ;;
   reset) cmd_reset ;;
+  completion) cmd_completion ;;
+  __complete) shift; cmd_complete "$@" ;;
   "") usage >&2; exit 2 ;;
   *) die "unknown command $command (see agd --help)" ;;
 esac

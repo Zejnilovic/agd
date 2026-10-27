@@ -70,7 +70,7 @@ Without Homebrew, on macOS, Linux, WSL or Git Bash:
 curl -fsSL https://raw.githubusercontent.com/Zejnilovic/agd/main/install.sh | bash
 ```
 
-The [install script](install.sh) puts the latest release in `~/.local/bin`; run it again to update. You can also download [`agd`](https://github.com/Zejnilovic/agd/releases/latest/download/agd) from the latest release, make it executable and put it on your `PATH`, or run `bin/agd` from a clone. [Install](https://zejnilovic.github.io/agd/install/) has every way, with checksums and Windows notes.
+The [install script](install.sh) puts the latest release in `~/.local/bin`; run it again to update. You can also download [`agd`](https://github.com/Zejnilovic/agd/releases/latest/download/agd) from the latest release, make it executable and put it on your `PATH`, or run `bin/agd` from a clone. [Install](https://zejnilovic.github.io/agd/install/) has every way, with checksums and Windows notes, and how to turn on tab completion: `source <(agd completion zsh)` or `bash` in your shell's profile; Homebrew sets it up.
 
 ## Quick start
 

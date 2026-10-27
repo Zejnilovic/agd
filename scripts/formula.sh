@@ -18,6 +18,7 @@ class Agd < Formula
 
   def install
     bin.install "bin/agd"
+    generate_completions_from_executable(bin/"agd", "completion", shells: [:bash, :zsh])
   end
 
   test do

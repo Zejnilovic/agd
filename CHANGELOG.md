@@ -4,6 +4,10 @@ What changed in agd. The next version's changes are collected here; each release
 
 Version numbers: **major** when the lock or `packs.txt` format changes and projects or sources need manual steps, **minor** for new commands or options, **patch** for fixes.
 
+## 0.3.0 (unreleased)
+
+- Tab completion for bash and zsh: `agd completion bash|zsh` prints the script, for example `source <(agd completion zsh)` in `~/.zshrc`, and Homebrew installs it. It completes commands, options, packs to add or remove, installed paths and source names from the lock, and the releases of any source, asking it with `git ls-remote` (only cached ones with `--offline`). It writes nothing, not even to the cache.
+
 ## 0.2.0 (2026-10-25)
 
 - `agd feedback [<note>]` reports a problem with installed kit files to the source that owns them, without telemetry. It finds the source from the kit files the note names, adds the source version, the agd version, the OS and whether the project changed each file, and opens a pre-filled issue in the browser with `gh`, or prints a link to one. Nothing is posted until you submit it. Without a note, it asks which kit files (picked in fzf when it is installed, or by number), what went wrong, what you expected and how the task ended; when you're not sure of the file and several sources are installed, it asks which source. For a source not on GitHub, it prints the report.
