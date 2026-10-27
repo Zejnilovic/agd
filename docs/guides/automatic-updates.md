@@ -20,7 +20,13 @@ To move to a newer agd, change `AGD_VERSION` and `AGD_SHA256`: the checksum is t
 
 ## Permissions
 
-The job needs `contents: write` to push the branch, and `pull-requests: write` to open the pull request; the workflow asks for both. A repository or organization can still forbid it: in **Settings → Actions → General**, under "Workflow permissions", turn on **Allow GitHub Actions to create and approve pull requests**.
+The job needs `contents: write` to push the branch, and `pull-requests: write` to open the pull request; the workflow asks for both. GitHub still forbids workflows to open pull requests until you allow it. The branch is pushed, then the run fails with:
+
+```text
+pull request create failed: GraphQL: GitHub Actions is not permitted to create or approve pull requests (createPullRequest)
+```
+
+In **Settings → Actions → General**, under "Workflow permissions", turn on **Allow GitHub Actions to create and approve pull requests**, and run the workflow again. In an organization, the organization's settings may have to allow it first.
 
 For a private source, give git a token that can read it before the update step, as [the FAQ shows](../faq.md#can-a-source-be-private).
 
