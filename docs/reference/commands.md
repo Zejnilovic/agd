@@ -21,8 +21,9 @@ Installs a source in the project, and writes `.agd.lock`.
 
 - **`<source>`** is a GitHub `owner/repo`, a git URL (`https://...`, `ssh://...`, `git@host:...`) or a local folder. Without it, agd installs agentic-defaults, or the URL in `AGD_SOURCE`.
 - **`@<version>`** installs that release, such as `@1.2.0`; **`@<commit>`** a commit, by its SHA. A commit that isn't on a branch needs its full SHA. Without either, agd installs the latest release; a source without releases needs a commit.
-- **`--with`** installs only the named packs, and the packs they require. Without it, agd installs every pack.
-- **`--yes`** replaces files without asking, where `.agd-ignore` gives a path from one source to another.
+- **Packs.** In a terminal, agd lists the source's packs, with their agents and skills, and asks which to install: numbers or names, or Enter for every pack. With [fzf](https://github.com/junegunn/fzf) installed, you pick them in fzf: Tab picks several, Ctrl-A all, Enter confirms, Esc installs nothing. A source with one pack isn't asked about. [Choose packs](../guides/packs.md) shows it.
+- **`--with`** installs only the named packs, and the packs they require, without asking.
+- **`--yes`** installs every pack without asking, and replaces files without asking where `.agd-ignore` gives a path from one source to another. Without a terminal, agd installs every pack too.
 
 In a project that is already set up, `init <source>` adds another source. It stops when the new source ships a path another source installed; [choose one in `.agd-ignore`](../guides/combine-sources.md#when-two-sources-ship-the-same-path). Paths where the project already has its own file are skipped and listed as `taken`.
 

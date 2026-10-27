@@ -75,7 +75,7 @@ The [install script](install.sh) puts the latest release in `~/.local/bin`; run 
 ## Quick start
 
 ```bash
-agd init                               # agentic-defaults, every pack of its latest release
+agd init                               # agentic-defaults' latest release; asks which packs
 agd init --with flask,react            # only those packs, and the packs they require
 agd init your-org/your-setup@1.2.0     # another source, at a release; @<commit> works too
 agd status                             # what an update would do

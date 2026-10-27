@@ -4,10 +4,11 @@
 #
 # Usage: agd [-C <dir>] [--offline] <command>
 #   init [<source>][@<version>|@<commit>] [--with <pack>,...] [--yes]
-#                             install every pack of the latest release of agentic-defaults, or of
-#                             <source>: a GitHub owner/repo, a git URL or a local folder. @ picks a
-#                             release or a commit. --with installs only the named packs and the
-#                             packs they require
+#                             install the latest release of agentic-defaults, or of <source>: a
+#                             GitHub owner/repo, a git URL or a local folder. @ picks a release or a
+#                             commit. In a terminal, asks which packs (in fzf when it is installed);
+#                             --with installs only the named packs, --yes or no terminal every pack.
+#                             Packs come with the packs they require
 #   adopt [<source>][@<version>]
 #                             start managing a copy made by hand or by scripts/sync.sh, without
 #                             changing a file; the version comes from AGENTS.md unless given
@@ -40,7 +41,7 @@
 # Docs: https://zejnilovic.github.io/agd
 
 set -u
-version=0.3.0
+version=0.4.0
 default_name=agentic-defaults
 default_url=${AGD_SOURCE:-https://github.com/Zejnilovic/agentic-defaults.git}
 cache_root=${AGD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/agd}
@@ -538,8 +539,52 @@ cmd_adopt() {
   echo "Commit $lock_file, then run agd status."
 }
 
+pack_menu() { # prints one line per pack of the new release: its name, file count, the packs it needs, its agents and skills
+  awk 'FILENAME == ARGV[1] { if ($1 == "pack") { order[++n] = $2; for (i = 3; i <= NF; i++) needs[$2] = needs[$2] (i > 3 ? " and " : "") $i } next }
+    { files[$1]++; p = $4; what = ""
+      if (p ~ /^\.claude\/agents\/[^\/]+\.md$/) { sub(/^\.claude\/agents\//, "", p); sub(/\.md$/, "", p); what = p " agent" }
+      else if (p ~ /^\.claude\/skills\/[^\/]+\/SKILL\.md$/) { split(p, part, "/"); what = part[3] " skill" }
+      if (what != "") has[$1] = has[$1] (has[$1] == "" ? "" : ", ") what }
+    END { for (i = 1; i <= n; i++) { k = order[i]
+      printf "%s (%d %s%s)%s\n", k, files[k], (files[k] == 1 ? "file" : "files"), (k in needs ? ", needs " needs[k] : ""), \
+        (has[k] == "" ? "" : ": " has[k]) } }' "$tmp/new.packs" "$tmp/new.files"
+}
+
+pick_packs() { # <source and version>: writes the packs to install to $tmp/picked, one per line; none when the user leaves
+  local n pick i bad
+  pack_menu >"$tmp/menu"
+  n=$(wc -l <"$tmp/menu" | tr -d ' ')
+  if command -v fzf >/dev/null 2>&1; then
+    fzf --multi --bind ctrl-a:select-all --prompt 'Pack> ' \
+      --header "Which packs of $1? Tab picks several, Ctrl-A all, Enter confirms, Esc installs nothing" \
+      <"$tmp/menu" | awk '{ print $1 }' >"$tmp/picked"
+    return 0
+  fi
+  echo "Which packs of $1?"
+  awk -v w=${#n} '{ printf "  %*d) %s\n", w, NR, $0 }' "$tmp/menu"
+  while :; do
+    printf 'Numbers or names, such as 2 3 or flask, or Enter for every pack: '
+    read -r pick || die "no answer, so nothing installed"
+    pick=$(printf '%s' "$pick" | tr ',' ' ')
+    if [ -z "$(printf '%s' "$pick" | tr -d ' \t')" ]; then
+      awk '{ print $1 }' "$tmp/menu" >"$tmp/picked"
+      return 0
+    fi
+    bad=0
+    : >"$tmp/picked"
+    for i in $pick; do
+      case "$i" in
+        *[!0-9]*) awk -v p="$i" '$1 == p { print p; found = 1 } END { exit !found }' "$tmp/menu" >>"$tmp/picked" || bad=1 ;;
+        *) if [ "$i" -ge 1 ] && [ "$i" -le "$n" ]; then awk -v i="$i" 'NR == i { print $1 }' "$tmp/menu" >>"$tmp/picked"; else bad=1; fi ;;
+      esac
+    done
+    [ "$bad" = 0 ] && break
+    echo "Type numbers from 1 to $n, or pack names."
+  done
+}
+
 cmd_init() {
-  local copied name url ref cache v all wanted pack mode sha path dst owner owner_sha owner_url
+  local copied name url ref cache v all wanted pack mode sha path dst owner owner_sha owner_url extra needs
   parse_spec "$arg"
   name=$spec_name url=$spec_url ref=$spec_ref
   if [ -f "$project/$lock_file" ]; then
@@ -574,6 +619,18 @@ cmd_init() {
       printf '%s\n' "$all" | grep -qx -- "$pack" || die "$name $(label "$v") has no pack $pack. Its packs: $(echo $all)"
     done
     wanted=$(with_requirements "$tmp/new.packs" $(printf '%s' "$with" | tr ',' ' '))
+  elif [ "$yes" = 0 ] && [ -t 0 ] && [ "$(printf '%s\n' "$all" | grep -c .)" -gt 1 ]; then
+    pick_packs "$name $(label "$v")"
+    if [ ! -s "$tmp/picked" ]; then echo "Nothing installed."; return 0; fi
+    wanted=$(with_requirements "$tmp/new.packs" $(LC_ALL=C sort -u "$tmp/picked"))
+    extra=$(printf '%s\n' "$wanted" | grep -vxF -f "$tmp/picked" || :)
+    if [ -n "$extra" ]; then
+      set -- $(LC_ALL=C sort -u "$tmp/picked")
+      if [ $# = 1 ]; then needs="$1 needs"; else needs="the packs you picked need"; fi
+      set -- $extra
+      if [ $# = 1 ]; then needs="$needs it"; else needs="$needs them"; fi
+      echo "Installing $(echo $extra) too: $needs."
+    fi
   else
     wanted=$all
   fi

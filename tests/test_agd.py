@@ -1274,16 +1274,12 @@ class AgdResolveTest(AgdCase):
         self.assertIn("Nothing to reset", result.stdout)
 
 
-class AgdFeedbackTest(AgdCase):
-    """agd feedback, which only reads .agd.lock and the note, so the tests write the lock themselves."""
-
-    GITHUB = "https://github.com/Zejnilovic/agentic-defaults.git"
-    REVIEWER = ".claude/agents/reviewer.md"
-    NOTE = "# The reviewer misses stale CONTEXT.md\n\nOutcome: partly done. Cause: .claude/agents/reviewer.md, rule ignored.\n"
+class WithoutGhAndFzf:
+    """Runs agd with a PATH without gh and fzf; fake_fzf adds a fake one."""
 
     @classmethod
     def setUpClass(cls):
-        # A PATH without gh and fzf: a folder with links to every other command on PATH.
+        # A folder with links to every other command on PATH.
         cls._bin = tempfile.TemporaryDirectory()
         for folder in os.environ["PATH"].split(os.pathsep):
             if not os.path.isdir(folder):
@@ -1300,6 +1296,90 @@ class AgdFeedbackTest(AgdCase):
     def setUp(self):
         super().setUp()
         self.env["PATH"] = self._bin.name
+
+    def fake_fzf(self, picks, code=0):
+        folder = pathlib.Path(self._tmp.name) / "fzf-bin"
+        log = pathlib.Path(self._tmp.name) / "fzf.log"
+        lines = "".join(f"echo '{pick}'\n" for pick in picks)
+        write(folder, "fzf", f'#!/bin/sh\nprintf "%s\\n" "$@" >"{log}"\ncat >"{log}.input"\n{lines}exit {code}\n')
+        (folder / "fzf").chmod(0o755)
+        self.env["PATH"] = f"{folder}:{self.env['PATH']}"
+        return log
+
+
+class AgdInitPickTest(WithoutGhAndFzf, AgdCase):
+    """agd init in a terminal, without --with, asks which packs to install."""
+
+    CORE = "  1) core (5 files): developer agent, implementation skill\n"
+    FLASK = "  2) flask (2 files, needs core): flask-developer agent, flask skill\n"
+
+    def test_lists_the_packs_and_enter_installs_every_pack(self):
+        self.release("1.0.0")
+        result = self.agd_answering("", "init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(self.CORE + self.FLASK, result.stdout)
+        self.assertEqual(self.lock_lines("pack"), ["pack agentic-defaults core", "pack agentic-defaults flask",
+                                                   "pack agentic-defaults react"])
+
+    def test_picked_packs_come_with_the_packs_they_need(self):
+        self.release("1.0.0")
+        # A wrong answer is asked again; numbers and names both pick.
+        result = self.agd_answering("4 vue\n3", "init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Type numbers from 1 to 3, or pack names.", result.stdout)
+        self.assertIn("Installing core too: react needs it.", result.stdout)
+        self.assertEqual(self.lock_lines("pack"), ["pack agentic-defaults core", "pack agentic-defaults react"])
+        self.assertFalse((self.project / ".claude/agents/flask-developer.md").exists())
+
+    def test_fzf_picks_the_packs_when_it_is_installed(self):
+        log = self.fake_fzf([self.FLASK.split(") ", 1)[1].rstrip()])
+        self.release("1.0.0")
+        result = self.agd_answering("", "init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--multi", log.read_text().splitlines())
+        self.assertTrue(pathlib.Path(str(log) + ".input").read_text().startswith(self.CORE.split(") ", 1)[1]))
+        self.assertEqual(self.lock_lines("pack"), ["pack agentic-defaults core", "pack agentic-defaults flask"])
+
+    def test_leaving_fzf_installs_nothing(self):
+        self.fake_fzf([], code=130)
+        self.release("1.0.0")
+        result = self.agd_answering("", "init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Nothing installed.", result.stdout)
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_yes_with_and_a_single_pack_install_without_asking(self):
+        self.release("1.0.0")
+        result = self.agd_answering("", "init", "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Which packs", result.stdout)
+        self.assertEqual(len(self.lock_lines("pack")), 3)
+        (self.project / ".agd.lock").unlink()
+        shutil.rmtree(self.project / ".claude")
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            (self.project / name).unlink()
+        result = self.agd_answering("", "init", "--with", "react")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Which packs", result.stdout)
+        self.assertEqual(self.lock_lines("pack"), ["pack agentic-defaults core", "pack agentic-defaults react"])
+
+    def test_a_release_with_one_pack_installs_without_asking(self):
+        self.release("1.0.0", packs=False)
+        result = self.agd_answering("", "init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Which packs", result.stdout)
+        self.assertEqual(self.lock_lines("pack"), ["pack agentic-defaults core"])
+
+
+class AgdFeedbackTest(WithoutGhAndFzf, AgdCase):
+    """agd feedback, which only reads .agd.lock and the note, so the tests write the lock themselves."""
+
+    GITHUB = "https://github.com/Zejnilovic/agentic-defaults.git"
+    REVIEWER = ".claude/agents/reviewer.md"
+    NOTE = "# The reviewer misses stale CONTEXT.md\n\nOutcome: partly done. Cause: .claude/agents/reviewer.md, rule ignored.\n"
+
+    def setUp(self):
+        super().setUp()
         self.files = {}
 
     def install(self, sources):
@@ -1480,15 +1560,6 @@ class AgdFeedbackTest(AgdCase):
         self.assertEqual(path, "/acme/team-kit/issues/new")
         self.assertIn("Kit files: none named\n", query["body"][0])
         self.assertIn("Kit file: not sure\n", query["body"][0])
-
-    def fake_fzf(self, picks, code=0):
-        folder = pathlib.Path(self._tmp.name) / "fzf-bin"
-        log = pathlib.Path(self._tmp.name) / "fzf.log"
-        lines = "".join(f"echo '{pick}'\n" for pick in picks)
-        write(folder, "fzf", f'#!/bin/sh\nprintf "%s\\n" "$@" >"{log}"\ncat >"{log}.input"\n{lines}exit {code}\n')
-        (folder / "fzf").chmod(0o755)
-        self.env["PATH"] = f"{folder}:{self.env['PATH']}"
-        return log
 
     def test_fzf_picks_the_files_when_it_is_installed(self):
         log = self.fake_fzf(["AGENTS.md", self.REVIEWER])

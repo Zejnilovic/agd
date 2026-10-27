@@ -4,6 +4,10 @@ What changed in agd. The next version's changes are collected here; each release
 
 Version numbers: **major** when the lock or `packs.txt` format changes and projects or sources need manual steps, **minor** for new commands or options, **patch** for fixes.
 
+## 0.4.0 (unreleased)
+
+- `agd init` in a terminal asks which packs to install, unless `--with` names them. It lists each pack with its file count, the packs it needs and its agents and skills; you type numbers or names, or press Enter for every pack. With fzf installed, you pick them in fzf (Esc installs nothing). Packs come with the packs they require, and agd says which it added. Without a terminal, or with `--yes`, agd installs every pack as before, so scripts are unchanged.
+
 ## 0.3.0 (2026-10-27)
 
 - Tab completion for bash and zsh: `agd completion bash|zsh` prints the script, for example `source <(agd completion zsh)` in `~/.zshrc`, and Homebrew installs it. It completes commands, options, packs to add or remove, installed paths and source names from the lock, and the releases of any source, asking it with `git ls-remote` (only cached ones with `--offline`). It writes nothing, not even to the cache.

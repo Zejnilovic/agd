@@ -12,7 +12,7 @@ Installed agentic-defaults 0.3.0: 37 files from the packs core.
 Commit .agd.lock along with the new files.
 ```
 
-That installs every pack of the latest release of agentic-defaults. Other ways to start:
+That installs the latest release of agentic-defaults. In a terminal, agd first asks which packs you want: Enter takes them all. Other ways to start:
 
 ```bash
 agd init --with flask,react     # only those packs, and what they require

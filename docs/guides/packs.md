@@ -4,13 +4,29 @@ A source groups its files into packs, such as agentic-defaults' `core`, `flask` 
 
 ## Install only some packs
 
-`agd init` installs every pack. To start with fewer, name them:
+In a terminal, `agd init` lists the source's packs and asks which to install:
+
+```text
+Which packs of agentic-defaults 0.5.0?
+   1) core (27 files): analyst agent, architect agent, developer agent, ...
+   2) research (3 files, needs core): research-collector agent, researcher agent, research skill
+   3) flask (2 files, needs core): flask-developer agent, flask skill
+   ...
+  10) copilot-hook (1 file, needs core)
+Numbers or names, such as 2 3 or flask, or Enter for every pack: flask
+Installing core too: flask needs it.
+Installed agentic-defaults 0.5.0: 29 files from the packs core flask.
+```
+
+Each pack brings the packs it needs. With [fzf](https://github.com/junegunn/fzf) installed, you pick them in fzf instead: Tab picks several, Ctrl-A all of them, Enter confirms, and Esc installs nothing.
+
+To choose without the question, for example in a script, name the packs:
 
 ```bash
 agd init --with flask,react
 ```
 
-That installs `flask`, `react` and `core`, which both require. An unknown name stops agd before it writes anything, and lists the source's packs.
+That installs `flask`, `react` and `core`, which both require. An unknown name stops agd before it writes anything, and lists the source's packs. Without a terminal, or with `--yes`, agd installs every pack.
 
 ## See what is installed
 
