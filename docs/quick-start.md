@@ -8,15 +8,27 @@ In the root of your project, a git repository:
 
 ```console
 $ agd init
-Installed agentic-defaults 0.3.0: 37 files from the packs core.
+Which packs of agentic-defaults 0.5.2?
+   1) core (27 files): analyst agent, architect agent, developer agent, documenter agent, reviewer agent, security-reviewer agent, tester agent, commits-and-prs skill, context-md skill, debugging skill, diagrams skill, implementation skill, project-profile skill, project-scan skill, session-retro skill, task-plans skill, tdd skill
+   2) research (3 files, needs core): research-collector agent, researcher agent, research skill
+   3) flask (2 files, needs core): flask-developer agent, flask skill
+   4) spring (2 files, needs core): spring-developer agent, spring skill
+   5) react (2 files, needs core): react-developer agent, react skill
+   6) relational-database (2 files, needs core): relational-database-developer agent, relational-database skill
+   7) terraform (2 files, needs core): terraform-developer agent, terraform skill
+   8) heroku (1 file, needs core): heroku skill
+   9) aws (1 file, needs core): aws skill
+  10) copilot-hook (1 file, needs core)
+Numbers or names, such as 2 3 or flask, or Enter for every pack:
+Installed agentic-defaults 0.5.2: 43 files from the packs aws copilot-hook core flask heroku react relational-database research spring terraform.
 Commit .agd.lock along with the new files.
 ```
 
-That installs the latest release of agentic-defaults. In a terminal, agd first asks which packs you want: Enter takes them all. Other ways to start:
+That installs the latest release of agentic-defaults, with the packs you pick: Enter takes them all, as here, and so does a run without a terminal. With [fzf](https://github.com/junegunn/fzf) installed, you pick them in fzf. Other ways to start:
 
 ```bash
 agd init --with flask,react     # only those packs, and what they require
-agd init @0.2.0                 # a given release
+agd init @0.5.1                 # a given release
 agd init your-org/your-setup    # another source
 ```
 
@@ -55,24 +67,30 @@ A change anywhere else in a file is an edit. agd never overwrites it, and tells 
 
 ```console
 $ agd status
-agentic-defaults 0.2.0 is installed, and 0.3.0 is available: run agd update.
-notes    https://github.com/Zejnilovic/agentic-defaults/releases/tag/v0.3.0
-update   .claude/agents/analyst.md
+agentic-defaults 0.4.0 is installed, and 0.5.2 is available: run agd update.
+notes    https://github.com/Zejnilovic/agentic-defaults/releases/tag/v0.5.0
+notes    https://github.com/Zejnilovic/agentic-defaults/releases/tag/v0.5.1
+notes    https://github.com/Zejnilovic/agentic-defaults/releases/tag/v0.5.2
+pack     aws is new in agentic-defaults 0.5.2: agd add aws installs it
 ...
+update   .claude/agents/developer.md
 model    .claude/agents/reviewer.md: opus (kit: sonnet)
-update   .claude/agents/reviewer.md
+update   .claude/agents/security-reviewer.md
 ...
-edited   .claude/skills/tdd/SKILL.md, newer version available: see agd diff .claude/skills/tdd/SKILL.md, then agd merge or agd reset it
+edited   .claude/skills/implementation/SKILL.md, newer version available: see agd diff .claude/skills/implementation/SKILL.md, then agd merge or agd reset it
 ...
-new      .claude/skills/project-profile/SKILL.md
+new      .claude/skills/session-retro/SKILL.md
+new      .claude/skills/session-retro/stats.sh
 ```
+
+Here the project installed core from 0.4.0, then chose opus for the reviewer and edited the implementation skill.
 
 Read the release notes it links, then update:
 
 ```console
 $ agd update
 ...
-agentic-defaults is at 0.3.0: 30 updated, 1 added, 0 removed.
+agentic-defaults is at 0.5.2: 8 updated, 2 added, 0 removed.
 Review the changes with git diff, and commit .agd.lock with them.
 ```
 
@@ -83,8 +101,8 @@ The reviewer kept `model: opus`, and the edited skill was left alone. Review the
 When you changed a file and the source changed it too, `agd diff` shows both changes, and `agd merge` combines them:
 
 ```console
-$ agd merge .claude/skills/tdd/SKILL.md
-merged   .claude/skills/tdd/SKILL.md: your changes and the kit's up to agentic-defaults 0.3.0, without conflicts. Review it with git diff.
+$ agd merge .claude/skills/implementation/SKILL.md
+merged   .claude/skills/implementation/SKILL.md: your changes and the kit's up to agentic-defaults 0.5.2, without conflicts. Review it with git diff.
 ```
 
 To drop your changes and take the source's file instead, use `agd reset <path>`.

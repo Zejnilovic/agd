@@ -56,7 +56,7 @@ When the source changes a file you edited, `agd status` says a newer version is 
 **See both changes:**
 
 ```bash
-agd diff .claude/skills/tdd/SKILL.md
+agd diff .claude/skills/implementation/SKILL.md
 ```
 
 It shows your changes since the file was installed, then the source's changes up to its latest release.
@@ -64,23 +64,33 @@ It shows your changes since the file was installed, then the source's changes up
 **Merge the source's changes into yours:**
 
 ```bash
-agd merge .claude/skills/tdd/SKILL.md
+agd merge .claude/skills/implementation/SKILL.md
 ```
 
 agd merges the file the way git merges branches, and records it as at the latest release, with your edits. Your model choice never conflicts. When both changed the same lines, agd writes conflict markers, exits with 1, and you resolve them as in any git merge:
 
+```console
+$ agd merge .claude/skills/implementation/SKILL.md
+merged   .claude/skills/implementation/SKILL.md with 1 conflict: resolve the <<<<<<< markers, then review it with git diff.
+```
+
 ```text
 <<<<<<< yours
-Your lines.
+## Deploys
+
+Deploy only from main, after the checks pass.
 =======
-The source's lines.
->>>>>>> agentic-defaults 0.3.0
+## Live systems
+
+Infrastructure, deployments and data outside a local or test setup are changed by the user, never by you.
+...
+>>>>>>> agentic-defaults 0.5.2
 ```
 
 **Drop your changes:**
 
 ```bash
-agd reset .claude/skills/tdd/SKILL.md
+agd reset .claude/skills/implementation/SKILL.md
 ```
 
 agd puts the file back as the installed release has it. It drops your edits and your `model:` and `tools:` lines, and keeps a "This project" section where the source's file has one. A file you deleted comes back. `agd update` then brings the newer version. `agd reset` without a path resets every installed file. It lists what it would drop and asks first; pass `--yes` to run it without a terminal.
@@ -100,5 +110,5 @@ Add them as new files with their own names, such as `.claude/agents/billing-expe
 Agents edit files too. Tell them where project changes go, so they don't edit installed files. agentic-defaults does it with a comment at the top of each file and a rule in `AGENTS.md`:
 
 ```markdown
-<!-- agentic-defaults 0.3.0. From agentic-defaults down to "This project": sync replaces it, so don't edit it. The rest belongs to the project. -->
+<!-- agentic-defaults 0.5.2. From agentic-defaults down to "This project": kit updates replace it, so don't edit it. The rest belongs to the project. -->
 ```

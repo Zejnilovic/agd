@@ -22,7 +22,7 @@ agd names the source after its repository, here `team-kit`. A local folder works
 
 ```console
 $ agd source list
-agentic-defaults 0.3.0 https://github.com/Zejnilovic/agentic-defaults.git (packs: core)
+agentic-defaults 0.5.2 https://github.com/Zejnilovic/agentic-defaults.git (packs: core flask)
 team-kit 1.2.0 https://github.com/your-org/team-kit.git (packs: core review)
 ```
 
