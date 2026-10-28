@@ -680,6 +680,52 @@ class AgdSourceTest(AgdCase):
         self.assertNotIn(" team ", self.lock().replace("\n", " \n"))
         self.assertIn("Nothing to do", self.agd("status").stdout)
 
+    def test_update_to_moves_the_named_source_and_leaves_the_others(self):
+        self.init()
+        team = self.team()
+        self.init(str(team))
+        self.release("1.1.0", {self.DEV: self.KIT[self.DEV].replace("Developer rules.", "New rules.")})
+        self.team({self.TEAM_REVIEWER: "---\nname: team-reviewer\ndescription: Ours.\n---\n\nReview twice.\n"},
+                  version="1.1.0")
+        before = self.lock()
+
+        result = self.agd("update", "--to", "1.1.0")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--to team@1.1.0", result.stderr)
+        result = self.agd("update", "--to", "nobody@1.1.0")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("no source named nobody", result.stderr)
+        self.assertEqual(self.lock(), before)
+
+        completion = subprocess.run([BASH, str(AGD), "__complete", "update", "--to", ""], cwd=self.project,
+                                    env=self.env, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.assertEqual(completion.stdout.split(), ["agentic-defaults@1.0.0", "agentic-defaults@1.1.0",
+                                                     "team@1.0.0", "team@1.1.0"])
+
+        result = self.agd("update", "--to", "team@1.1.0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Review twice.", self.read(self.TEAM_REVIEWER))
+        self.assertIn("Developer rules.", self.read(self.DEV))
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} 1.0.0",
+                                                     f"source team {team} 1.1.0"])
+        for kind in ("commit", "pack", "file"):
+            self.assertEqual([l for l in self.lock_lines(kind) if " agentic-defaults " in l + " "],
+                             [l for l in before.splitlines() if l.startswith(f"{kind} agentic-defaults ")])
+
+    def test_a_moved_tag_of_one_of_several_sources_is_accepted_by_name(self):
+        self.init()
+        team = self.team()
+        self.init(str(team))
+        self.team({self.TEAM_REVIEWER: "---\nname: team-reviewer\ndescription: Ours.\n---\n\nApprove.\n"})
+        run(["git", "tag", "-f", "v1.0.0"], team)
+        result = self.agd("status")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd update --to team@1.0.0", result.stderr)
+        result = self.agd("update", "--to", "team@1.0.0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Approve.", self.read(self.TEAM_REVIEWER))
+        self.assertEqual(self.agd("status").returncode, 0)
+
     FLASK = ".claude/agents/flask-developer.md"
 
     def uninstallable(self):

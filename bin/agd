@@ -13,8 +13,9 @@
 #                             start managing a copy made by hand or by scripts/sync.sh, without
 #                             changing a file; the version comes from AGENTS.md unless given
 #   status [--check]          show what agd update would do; --check exits 1 when an update is due
-#   update [--to <version>|<commit>]
-#                             update to the latest release, or to the given release or commit
+#   update [--to [<source>@]<version>|<commit>]
+#                             update to the latest release, or to the given release or commit; with
+#                             several sources, --to names the one to move, and the others stay as they are
 #   add <pack>                install a pack, and the packs it requires, from the installed release
 #   remove <pack>             remove a pack; files you changed stay, as yours
 #   diff <path>               show your changes to a kit file, and the kit's changes since it was installed
@@ -184,7 +185,9 @@ check_tag() { # <name> <url> <cache> <version>: stops, showing the change to the
       echo "The cache no longer has $was, so agd can't show the change."
     fi
   fi
-  die "a moved tag can change files you reviewed, so agd stops. If you trust the change, run agd update --to $4; otherwise ask the source why the tag moved"
+  local to=$4
+  [ "$(grep -c '^source ' "$project/$lock_file")" -le 1 ] || to=$1@$4
+  die "a moved tag can change files you reviewed, so agd stops. If you trust the change, run agd update --to $to; otherwise ask the source why the tag moved"
 }
 
 lock_commits() { # the commit line of each release in $tmp/lock.sources: from $tmp/accepted, else the lock's for the same release, else its tag's
@@ -876,13 +879,27 @@ cmd_status() {
 
 cmd_update() {
   need_lock
-  local name url v cache target kind path a b c dst updated added removed
+  local name url v cache target kind path a b c dst updated added removed only=""
   sources >"$tmp/sources"
-  [ -z "$to" ] || [ "$(grep -c . "$tmp/sources")" -le 1 ] || die "--to works only with a single source"
+  case "$to" in
+    "") ;;
+    *@*)
+      only=${to%@*} to=${to##*@}
+      [ -n "$(source_line "$only")" ] || die "no source named $only here: see agd source list" ;;
+    *)
+      [ "$(grep -c . "$tmp/sources")" -le 1 ] \
+        || die "this project has several sources: name the one to move, for example --to $(tail -1 "$tmp/sources" | cut -d' ' -f1)@$to" ;;
+  esac
   : >"$tmp/lock.sources"
   : >"$tmp/lock.packs"
   : >"$tmp/lock.files"
   while read -r name url v; do
+    if [ -n "$only" ] && [ "$name" != "$only" ]; then
+      echo "source $name $url $v" >>"$tmp/lock.sources"
+      awk -v s="$name" '$1 == "pack" && $2 == s' "$project/$lock_file" >>"$tmp/lock.packs"
+      awk -v s="$name" '$1 == "file" && $2 == s' "$project/$lock_file" >>"$tmp/lock.files"
+      continue
+    fi
     updated=0 added=0 removed=0
     cache=$(cache_of "$url")
     refresh "$url" "$cache"
@@ -1538,7 +1555,7 @@ pack_names() { # <cache> <version>: the packs of a release
 }
 
 cmd_complete() { # <word>... <word at the cursor>
-  local want="" cmd="" n=0 first="" cur prefix="" url
+  local want="" cmd="" n=0 first="" cur prefix="" url name several
   while [ $# -gt 1 ]; do
     if [ -n "$want" ]; then
       [ "$want" != -C ] || dir=$1
@@ -1562,8 +1579,10 @@ cmd_complete() { # <word>... <word at the cursor>
     -C) echo :dirs; return ;;
     --to)
       [ -f "$project/$lock_file" ] || return 0
-      awk '$1 == "source" { print $3 }' "$project/$lock_file" | while read -r url; do
-        live_releases "$url"
+      # With several sources, --to names one: <source>@<version>.
+      awk '$1 == "source" { n++ } END { exit n < 2 }' "$project/$lock_file" && several=1 || several=0
+      awk '$1 == "source" { print $2, $3 }' "$project/$lock_file" | while read -r name url; do
+        if [ "$several" = 1 ]; then live_releases "$url" | sed "s/^/$name@/"; else live_releases "$url"; fi
       done | sort -u | sed "s/^/$prefix/"
       return ;;
     --with) return ;;

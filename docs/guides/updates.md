@@ -47,7 +47,7 @@ agd update --to 0.2.0          # a release, newer or older than yours
 agd update --to 3f2c1ab        # a commit, for example to try a change before its release
 ```
 
-`--to` works when the project has one source. A project installed at a commit moves to the latest release with a plain `agd update`.
+With several sources, name the one to move, such as `agd update --to team-kit@1.3.0`; the others stay as they are. A project installed at a commit moves to the latest release with a plain `agd update`.
 
 ## When a release changes after you installed it
 
@@ -70,7 +70,7 @@ index dba2b36..ae6280a 100644
 agd: a moved tag can change files you reviewed, so agd stops. If you trust the change, run agd update --to 1.2.0; otherwise ask the source why the tag moved
 ```
 
-If you trust the change, `agd update --to 1.2.0` installs the release as it is now and records its new commit. Otherwise, ask the source's maintainers why the tag moved. In CI, `agd status --check` fails with exit code 2.
+If you trust the change, `agd update --to 1.2.0` installs the release as it is now and records its new commit. With several sources, the message names the source: `agd update --to team-kit@1.2.0`. Otherwise, ask the source's maintainers why the tag moved. In CI, `agd status --check` fails with exit code 2.
 
 ## Check for updates in CI
 

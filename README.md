@@ -91,7 +91,7 @@ Commit `.agd.lock` with the files, so your team gets the same setup. The [quick 
 | `agd init [<source>][@<version>\|@<commit>] [--with <packs>] [--yes]` | Installs a source: a GitHub `owner/repo`, a git URL or a local folder. In a project that is set up, adds another source. |
 | `agd adopt [@<version>]` | Starts managing a copy of agentic-defaults made by hand or by its old `sync.sh`, without changing a file. |
 | `agd status [--check]` | Shows what `agd update` would do. `--check` exits 1 when an update is due, for CI. |
-| `agd update [--to <version>\|<commit>]` | Updates every source to its latest release, or to the given one. |
+| `agd update [--to [<source>@]<version>\|<commit>]` | Updates every source to its latest release, or one source to the given one. |
 | `agd add <pack>`, `agd remove <pack>` | Installs or removes a pack. Removing keeps the files you changed, as yours. |
 | `agd diff`, `agd merge`, `agd reset` | Settle a file you changed: see both changes, merge the source's into yours, or take the source's file. |
 | `agd source list`, `agd source remove <name>` | List or remove sources. |

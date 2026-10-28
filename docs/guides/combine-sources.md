@@ -53,7 +53,7 @@ When two sources have a pack of the same name, name the source with it: `agd add
 
 ## Update and remove
 
-`agd update` and `agd status` work on every source at once. `agd update --to` works only when the project has one source.
+`agd update` and `agd status` work on every source at once. To move one source to a given release or commit, name it: `agd update --to team-kit@1.3.0`. The other sources stay as they are.
 
 To remove a source and its files:
 

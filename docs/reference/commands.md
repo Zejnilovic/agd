@@ -46,12 +46,12 @@ Shows what `agd update` would do, file by file, and links the release notes of G
 ## update
 
 ```text
-agd update [--to <version>|<commit>]
+agd update [--to [<source>@]<version>|<commit>]
 ```
 
-Updates every source to its latest release, keeping the project parts of each file and leaving edited files alone. `--to` moves to the given release, newer or older, or to a commit; it works when the project has one source.
+Updates every source to its latest release, keeping the project parts of each file and leaving edited files alone. `--to` moves to the given release, newer or older, or to a commit. When the project has several sources, `--to` names the one to move, as `<source>@<version>` or `<source>@<commit>`, and leaves the others as they are.
 
-If an installed release's tag has moved to another commit since it was installed, `update` stops and shows the change, as do `status`, `add`, `remove`, `diff`, `merge` and `reset`. `--to <version>` accepts the release as it is now. See [When a release changes after you installed it](../guides/updates.md#when-a-release-changes-after-you-installed-it).
+If an installed release's tag has moved to another commit since it was installed, `update` stops and shows the change, as do `status`, `add`, `remove`, `diff`, `merge` and `reset`. `--to <version>`, or `--to <source>@<version>` with several sources, accepts the release as it is now. See [When a release changes after you installed it](../guides/updates.md#when-a-release-changes-after-you-installed-it).
 
 ## add
 
@@ -165,7 +165,7 @@ agd completion bash
 agd completion zsh
 ```
 
-Prints the shell's tab completion script. It completes commands and options; from the project's `.agd.lock`, the packs to add or remove, installed paths for `diff`, `merge` and `reset`, and source names; and the releases for `update --to` and `init <source>@`, which it asks each source for with `git ls-remote`, for up to 3 seconds, adding the cached ones. With `--offline`, it offers only the cached releases. Completing writes nothing, not even to the cache, so it doesn't offer the packs of a source that isn't installed yet. Homebrew installs the scripts; otherwise [turn it on in your shell](../install.md#tab-completion).
+Prints the shell's tab completion script. It completes commands and options; from the project's `.agd.lock`, the packs to add or remove, installed paths for `diff`, `merge` and `reset`, and source names; and the releases for `update --to` (as `<source>@<version>` when the project has several sources) and `init <source>@`, which it asks each source for with `git ls-remote`, for up to 3 seconds, adding the cached ones. With `--offline`, it offers only the cached releases. Completing writes nothing, not even to the cache, so it doesn't offer the packs of a source that isn't installed yet. Homebrew installs the scripts; otherwise [turn it on in your shell](../install.md#tab-completion).
 
 ## Environment
 
