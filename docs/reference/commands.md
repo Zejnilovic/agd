@@ -100,6 +100,14 @@ agd source remove <name>
 
 `list` shows each source with its version, URL and installed packs. `remove` removes a source and its files; files you changed stay, as project files. It refuses while another source's installed packs require the source.
 
+## uninstall
+
+```text
+agd uninstall [--yes]
+```
+
+Takes agd out of the project: removes every source, deletes the installed files you haven't changed (and folders left empty), and removes `.agd.lock`. It leaves `.agd-ignore` and the cache. It lists what it would do first, and writes nothing before you answer. For each file you changed, it asks whether to delete it or keep it as a project file (Enter keeps it; `a` deletes it and the rest, `k` keeps it and the rest), then asks once more for the whole change. Without a terminal it needs `--yes`, which keeps every file you changed. It doesn't fetch anything, so it works offline.
+
 ## feedback
 
 ```text

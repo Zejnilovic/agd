@@ -680,6 +680,70 @@ class AgdSourceTest(AgdCase):
         self.assertNotIn(" team ", self.lock().replace("\n", " \n"))
         self.assertIn("Nothing to do", self.agd("status").stdout)
 
+    FLASK = ".claude/agents/flask-developer.md"
+
+    def uninstallable(self):
+        """Both sources installed, the developer and flask agents changed, and an ignore file."""
+        self.init()
+        self.init(str(self.team()))
+        write(self.project, self.DEV, self.read(self.DEV).replace("Developer rules.", "Our rules."))
+        write(self.project, self.FLASK, self.read(self.FLASK).replace("Flask.\n", "Our Flask.\n"))
+        write(self.project, ".agd-ignore", ".claude/agents/react-developer.md\n")
+        return self.lock()
+
+    def assert_uninstalled(self, kept):
+        for rel in ("AGENTS.md", "CLAUDE.md", self.TEAM_REVIEWER, ".claude/skills/implementation/SKILL.md"):
+            self.assertFalse((self.project / rel).exists(), rel)
+        self.assertFalse((self.project / ".claude/skills").exists())
+        self.assertFalse((self.project / ".agd.lock").exists())
+        self.assertTrue((self.project / ".agd-ignore").is_file())
+        self.assertEqual([rel for rel in (self.DEV, self.FLASK) if (self.project / rel).exists()], kept)
+        if self.DEV in kept:
+            self.assertIn("Our rules.", self.read(self.DEV))
+
+    def test_uninstall_without_a_terminal_lists_everything_and_needs_yes(self):
+        before = self.uninstallable()
+        result = self.agd("uninstall")
+        self.assertEqual(result.returncode, 2)
+        self.assertRegex(result.stdout, r"delete\s+\.claude/agents/team-reviewer\.md")
+        self.assertRegex(result.stdout, r"changed\s+\.claude/agents/developer\.md")
+        self.assertRegex(result.stdout, r"delete\s+\.agd\.lock")
+        self.assertIn("--yes", result.stderr)
+        self.assertEqual(self.lock(), before)
+        self.assertTrue((self.project / "AGENTS.md").is_file())
+
+        result = self.agd("uninstall", "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_uninstalled([self.DEV, self.FLASK])
+        self.assertRegex(result.stdout, r"kept\s+\.claude/agents/developer\.md")
+        self.assertIn("2 kept", result.stdout)
+
+    def test_uninstall_asks_about_each_changed_file(self):
+        self.uninstallable()
+        result = self.agd_answering("y\n\ny", "uninstall")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_uninstalled([self.FLASK])
+
+    def test_uninstall_answers_for_the_rest_of_the_changed_files(self):
+        self.uninstallable()
+        result = self.agd_answering("a\ny", "uninstall")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_uninstalled([])
+
+        self.uninstallable()
+        result = self.agd_answering("k\ny", "uninstall")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_uninstalled([self.DEV, self.FLASK])
+
+    def test_uninstall_answered_no_changes_nothing(self):
+        before = self.uninstallable()
+        result = self.agd_answering("y\ny\nn", "uninstall")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Nothing uninstalled", result.stdout)
+        self.assertEqual(self.lock(), before)
+        self.assertIn("Our rules.", self.read(self.DEV))
+        self.assertTrue((self.project / "AGENTS.md").is_file())
+
 
 class AgdAdoptTest(AgdCase):
     """agd adopt, for copies made by hand or by scripts/sync.sh before agd."""
@@ -1677,6 +1741,8 @@ class AgdCompletionTest(AgdCase):
         self.assertEqual(self.complete("status", "--"), ["--check", "--offline"])
         self.assertEqual(self.complete("completion", ""), ["bash", "zsh"])
         self.assertEqual(self.complete("source", ""), ["list", "remove"])
+        self.assertIn("uninstall", commands)
+        self.assertEqual(self.complete("uninstall", "-"), ["--offline", "--yes", "-C"])
 
     def test_offers_the_packs_paths_sources_and_releases_of_the_project(self):
         self.assertEqual(self.complete("add", ""), ["react"])

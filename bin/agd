@@ -23,6 +23,8 @@
 #                             the "This project" section of AGENTS.md; asks first, unless --yes
 #   source list               list the sources here, with their versions and packs
 #   source remove <name>      remove a source; files you changed stay, as yours
+#   uninstall [--yes]         remove every source, its unchanged files and .agd.lock; asks whether to
+#                             delete each file you changed. --yes keeps them, as yours
 #   feedback [<note>]         report a problem with kit files to the source that owns them: opens a
 #                             pre-filled issue in the browser with gh, or prints its link; posts nothing.
 #                             Without a note, asks a few questions in the terminal
@@ -96,7 +98,8 @@ project=$(cd "$dir" && pwd)
 [ -z "$with" ] || [ "$command" = init ] || die "--with works only with init"
 [ -z "$to" ] || [ "$command" = update ] || die "--to works only with update"
 [ "$check" = 0 ] || [ "$command" = status ] || die "--check works only with status"
-[ "$yes" = 0 ] || [ "$command" = reset ] || [ "$command" = init ] || die "--yes works only with init and reset"
+[ "$yes" = 0 ] || [ "$command" = reset ] || [ "$command" = init ] || [ "$command" = uninstall ] ||
+  die "--yes works only with init, reset and uninstall"
 
 tmp=$(mktemp -d) || die "can't create a temporary folder"
 trap 'rm -rf "$tmp"' EXIT
@@ -1130,6 +1133,71 @@ cmd_reset() {
   echo "Reset $(count "$n" file). Review the changes with git diff, and commit $lock_file with them."
 }
 
+cmd_uninstall() {
+  need_lock
+  local name url v path sha rest="" answer what deleting kept=0
+  sources >"$tmp/sources"
+  awk '$1 == "file" { print $2, $3, $4 }' "$project/$lock_file" >"$tmp/files"
+  : >"$tmp/deleting"
+  : >"$tmp/changed"
+  # A file is unchanged when it is the blob agd installed, so deleting it loses nothing of the project's.
+  while read -r name url v; do
+    awk -v s="$name" '$1 == s { print $2, $3 }' "$tmp/files" >"$tmp/owned"
+    while read -r path sha; do
+      [ -e "$project/$path" ] || continue
+      if [ "$(git hash-object -- "$project/$path" </dev/null)" = "$sha" ]; then
+        echo "$path" >>"$tmp/deleting"
+        echo "delete   $path"
+      else
+        echo "$path" >>"$tmp/changed"
+        echo "changed  $path (it has your changes)"
+      fi
+    done <"$tmp/owned"
+  done <"$tmp/sources"
+  echo "delete   $lock_file"
+  if [ "$yes" = 0 ]; then
+    [ -t 0 ] || die "uninstall would delete the files above: confirm in a terminal, or run it with --yes, which keeps the changed files"
+    if [ -s "$tmp/changed" ]; then
+      echo "For each file with your changes, answer y to delete it, n or Enter to keep it as yours,"
+      echo "a to delete it and the rest, or k to keep it and the rest."
+    fi
+    while read -r path <&3; do
+      answer=$rest
+      if [ -z "$answer" ]; then
+        printf 'Delete %s? [y/N/a/k] ' "$path"
+        read -r answer || answer=""
+      fi
+      case "$answer" in
+        a|A) rest=y; echo "$path" >>"$tmp/deleting" ;;
+        k|K) rest=n ;;
+        y|Y|yes|Yes|YES) echo "$path" >>"$tmp/deleting" ;;
+      esac
+    done 3<"$tmp/changed"
+    deleting=$(grep -c . "$tmp/deleting")
+    what=$lock_file
+    [ "$deleting" = 0 ] || what="$(count "$deleting" file) and $lock_file"
+    printf 'Delete %s? [y/N] ' "$what"
+    read -r answer || answer=""
+    case "$answer" in
+      y|Y|yes|Yes|YES) ;;
+      *) echo "Nothing uninstalled."; return 0 ;;
+    esac
+  fi
+  cat "$tmp/deleting" "$tmp/changed" | LC_ALL=C sort -u >"$tmp/listed"
+  while read -r path; do
+    if grep -qxF -- "$path" "$tmp/deleting"; then
+      rm -f "$project/$path" && prune "$(dirname "$project/$path")"
+      echo "deleted  $path"
+    else
+      echo "kept     $path (it has your changes, so it is yours now)"
+      kept=$((kept + 1))
+    fi
+  done <"$tmp/listed"
+  rm -f "$project/$lock_file"
+  echo "Uninstalled agd: $(count "$(grep -c . "$tmp/deleting")" file) deleted, $kept kept as yours, and $lock_file removed."
+  echo "Review the change with git status, and commit it."
+}
+
 github_repo() { # <url>: prints owner/repo for a GitHub URL, or fails
   printf '%s\n' "${1%/}" | sed -n -E 's#^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$#\2#p' \
     | sed 's/\.git$//' | grep .
@@ -1454,13 +1522,13 @@ cmd_complete() { # <word>... <word at the cursor>
         init) echo -C --offline --with --yes ;;
         status) echo --offline --check ;;
         update) echo -C --offline --to ;;
-        reset) echo -C --offline --yes ;;
+        reset|uninstall) echo -C --offline --yes ;;
         *) echo -C --offline ;;
       esac | tr ' ' '\n'
       return ;;
   esac
   case "$cmd:$n" in
-    :0) printf '%s\n' init adopt status update add remove diff merge reset source feedback completion ;;
+    :0) printf '%s\n' init adopt status update add remove diff merge reset source uninstall feedback completion ;;
     init:0|adopt:0)
       case "$cur" in
         *@*)
@@ -1490,6 +1558,7 @@ case "$command" in
   diff) cmd_diff ;;
   merge) cmd_merge ;;
   reset) cmd_reset ;;
+  uninstall) cmd_uninstall ;;
   completion) cmd_completion ;;
   __complete) shift; cmd_complete "$@" ;;
   "") usage >&2; exit 2 ;;

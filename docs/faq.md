@@ -51,7 +51,7 @@ No. `agd init your-org/your-setup` installs any source, without agentic-defaults
 
 ## How do I stop using agd?
 
-Delete `.agd.lock`. The installed files stay, as project files that agd no longer manages. To remove one source and its unchanged files instead, run `agd source remove <name>`.
+Run `agd uninstall`. It deletes the installed files you haven't changed and `.agd.lock`, and asks about each file you changed: delete it, or keep it as yours. To remove one source instead, run `agd source remove <name>`. To keep every installed file as a project file that agd no longer manages, delete `.agd.lock`.
 
 ## Does agd work on Windows?
 
