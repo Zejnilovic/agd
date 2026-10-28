@@ -33,22 +33,23 @@ A good agentic setup takes work: `AGENTS.md`, agents for each role, skills, hook
 agd keeps a setup in a git repository, installs it into your projects at a version, and updates it while keeping each project's own changes. The default setup is [agentic-defaults](https://github.com/Zejnilovic/agentic-defaults); any repository laid out as a source works, and several can share a project.
 
 ```console
-$ agd init @0.2.0
-Installed agentic-defaults 0.2.0: 36 files from the packs core.
+$ agd init @0.4.0 --with core
+Installed agentic-defaults 0.4.0: 25 files from the packs core.
 Commit .agd.lock along with the new files.
 
 $ agd status        # weeks later: you chose opus for the reviewer, and edited a skill
-agentic-defaults 0.2.0 is installed, and 0.3.0 is available: run agd update.
-notes    https://github.com/Zejnilovic/agentic-defaults/releases/tag/v0.3.0
-update   .claude/agents/analyst.md
+agentic-defaults 0.4.0 is installed, and 0.5.2 is available: run agd update.
+notes    https://github.com/Zejnilovic/agentic-defaults/releases/tag/v0.5.0
 ...
+update   .claude/agents/developer.md
 model    .claude/agents/reviewer.md: opus (kit: sonnet)
-edited   .claude/skills/tdd/SKILL.md, newer version available: see agd diff .claude/skills/tdd/SKILL.md, then agd merge or agd reset it
+edited   .claude/skills/implementation/SKILL.md, newer version available: see agd diff .claude/skills/implementation/SKILL.md, then agd merge or agd reset it
 ...
+new      .claude/skills/session-retro/SKILL.md
 
 $ agd update
 ...
-agentic-defaults is at 0.3.0: 30 updated, 1 added, 0 removed.
+agentic-defaults is at 0.5.2: 8 updated, 2 added, 0 removed.
 Review the changes with git diff, and commit .agd.lock with them.
 ```
 
@@ -56,7 +57,7 @@ Review the changes with git diff, and commit .agd.lock with them.
 - **Plain files in your repository.** Your agents read them as they are, people review them in pull requests. No plugin, no runtime, any assistant: Claude Code, GitHub Copilot, Cursor, Codex and others.
 - **Never overwrites your work.** Updates keep an agent's `model:` and `tools:` lines and a `## This project` section. A file you changed elsewhere is left alone and reported, and `agd diff`, `agd merge` and `agd reset` settle it.
 - **Composable.** Install only the packs you need, and stack your team's setup on top of agentic-defaults.
-- **Small enough to trust.** One bash script that needs only git. It never runs code from a source.
+- **Small enough to trust.** One bash script that needs only git. It never runs code from a source, and stops with the diff if a source moves a release's tag after you installed it. agd's own releases carry [build provenance](https://zejnilovic.github.io/agd/install/#check-a-download). See [SECURITY.md](SECURITY.md).
 
 ## Install
 
@@ -80,6 +81,7 @@ agd init --with flask,react            # only those packs, and the packs they re
 agd init your-org/your-setup@1.2.0     # another source, at a release; @<commit> works too
 agd status                             # what an update would do
 agd update                             # move to the latest release
+agd uninstall                          # take it all out again; asks about files you changed
 ```
 
 Commit `.agd.lock` with the files, so your team gets the same setup. The [quick start](https://zejnilovic.github.io/agd/quick-start/) walks through a first install, making files your own and a first update.
@@ -108,8 +110,8 @@ Commit `.agd.lock` with the files, so your team gets the same setup. The [quick 
 - [Keep it up to date](https://zejnilovic.github.io/agd/guides/updates/), and [automatically](https://zejnilovic.github.io/agd/guides/automatic-updates/), with a weekly pull request from CI.
 - [Mirrors, proxies and offline machines](https://zejnilovic.github.io/agd/guides/company-networks/): agd on company networks.
 - [Combine sources](https://zejnilovic.github.io/agd/guides/combine-sources/): your team's setup on top of agentic-defaults.
-- [Publish your own agentic setup](docs/sources.md): the layout, `packs.txt`, releases.
-- [FAQ](https://zejnilovic.github.io/agd/faq/)
+- [Publish your own agentic setup](docs/sources.md): the layout, `packs.txt`, releases, and `agd check` before you tag one.
+- [FAQ](https://zejnilovic.github.io/agd/faq/), including [why not copy the files or use a git submodule](https://zejnilovic.github.io/agd/faq/#why-not-copy-the-files-or-use-a-git-submodule).
 
 ## Contributing
 
