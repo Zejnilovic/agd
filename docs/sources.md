@@ -71,7 +71,21 @@ A project can install your source next to others with `agd init your-org/your-se
 
 ## Try it before you release
 
-In a scratch project, install your source from its folder or a commit, and look:
+First check the source. In its folder, `agd check` reads the working tree, so it runs before you commit or tag. It checks `packs.txt` as an install reads it: every path exists, a folder ends in `/`, no file is in two packs, each `requires` names a pack of this source or `<source>:<pack>`, no packs require each other in a cycle, no path has spaces or quotes, there is a `v<major.minor.patch>` tag, and `min-agd` isn't newer than your agd. It prints one line per problem and exits with 1 on an error; warnings, such as a line it doesn't know, don't fail it. It writes nothing and fetches nothing, so it fits in your CI:
+
+```text
+$ agd check
+error    packs.txt:6: .claude/skills/api-review is a folder, so end it with /
+error    packs.txt:8: pack release requires reviews, which isn't a pack here (another source's is <source>:<pack>)
+2 errors and 0 warnings in /home/you/work/team-kit.
+```
+
+```text
+$ agd check
+No problems: 2 packs, 3 files.
+```
+
+Then, in a scratch project, install your source from its folder or a commit, and look:
 
 ```bash
 agd init ~/work/your-setup

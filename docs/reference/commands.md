@@ -110,6 +110,14 @@ agd uninstall [--yes]
 
 Takes agd out of the project: removes every source, deletes the installed files you haven't changed (and folders left empty), and removes `.agd.lock`. It leaves `.agd-ignore` and the cache. It lists what it would do first, and writes nothing before you answer. For each file you changed, it asks whether to delete it or keep it as a project file (Enter keeps it; `a` deletes it and the rest, `k` keeps it and the rest), then asks once more for the whole change. Without a terminal it needs `--yes`, which keeps every file you changed. It doesn't fetch anything, so it works offline.
 
+## check
+
+```text
+agd check [<folder>]
+```
+
+Checks a source before you release it: its `packs.txt`, the paths in each pack, `requires`, release tags and `min-agd`, in the working tree of `<folder>` (default: the current folder), so it runs before you tag. It parses `packs.txt` as installs do, prints one line per error or warning, and exits with 1 when there is an error. A file in no pack is a warning when the root is a kit folder; with `root .`, files outside the packs stay out on purpose. It writes nothing and fetches nothing. See [Try it before you release](../sources.md#try-it-before-you-release).
+
 ## feedback
 
 ```text
@@ -179,5 +187,5 @@ Prints the shell's tab completion script. It completes commands and options; fro
 | Code | Means |
 |---|---|
 | `0` | Done. |
-| `1` | `status --check`: an update is due. `merge`: the merge left conflicts. |
+| `1` | `status --check`: an update is due. `merge`: the merge left conflicts. `check`: the source has an error. |
 | `2` | An error, such as a wrong argument, a missing lock or a source agd can't fetch. The message says what to do. |

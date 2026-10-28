@@ -95,6 +95,7 @@ Commit `.agd.lock` with the files, so your team gets the same setup. The [quick 
 | `agd add <pack>`, `agd remove <pack>` | Installs or removes a pack. Removing keeps the files you changed, as yours. |
 | `agd diff`, `agd merge`, `agd reset` | Settle a file you changed: see both changes, merge the source's into yours, or take the source's file. |
 | `agd source list`, `agd source remove <name>` | List or remove sources. |
+| `agd check [<folder>]` | Checks a source before you release it: `packs.txt`, paths, packs and release tags. |
 | `agd uninstall [--yes]` | Removes every source and `.agd.lock`, deleting the files you haven't changed. Asks about each file you changed. |
 | `agd feedback [<note>]` | Report a problem with kit files to the source that owns them, as an issue you review before posting. Without a note, it asks a few questions. |
 

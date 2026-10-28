@@ -24,6 +24,8 @@
 #                             the "This project" section of AGENTS.md; asks first, unless --yes
 #   source list               list the sources here, with their versions and packs
 #   source remove <name>      remove a source; files you changed stay, as yours
+#   check [<folder>]          check a source before you release it: its packs.txt, paths, packs and
+#                             release tags, in the working tree; exits 1 on an error. Writes nothing
 #   uninstall [--yes]         remove every source, its unchanged files and .agd.lock; asks whether to
 #                             delete each file you changed. --yes keeps them, as yours
 #   feedback [<note>]         report a problem with kit files to the source that owns them: opens a
@@ -84,7 +86,7 @@ done
 case "$command" in
   diff|merge) [ -n "$arg" ] || die "agd $command needs a path, for example agd $command .claude/agents/reviewer.md" ;;
   add|remove) [ -n "$arg" ] || die "agd $command needs a pack, for example agd $command flask" ;;
-  init|reset|adopt|feedback|completion|__complete) ;;
+  init|reset|adopt|feedback|completion|check|__complete) ;;
   source)
     case "$arg" in
       list) [ -z "$arg2" ] || die "unexpected argument $arg2 (see agd --help)" ;;
@@ -211,8 +213,12 @@ newer() { # <a> <b>: succeeds when version a is newer than version b; a commit i
 }
 
 root_of() { # <cache> <version>: the folder a release installs from, ending in /, or nothing for the repository's root
+  git -C "$1" show "$(treeish "$2"):packs.txt" 2>/dev/null </dev/null | packs_root
+}
+
+packs_root() { # reads packs.txt: the folder its files are in, ending in /, or nothing for the repository's root
   local r
-  r=$(git -C "$1" show "$(treeish "$2"):packs.txt" 2>/dev/null </dev/null | awk '$1 == "root" { print $2; exit }')
+  r=$(awk '$1 == "root" { print $2; exit }')
   r=${r:-kit/}
   r=${r#./}
   case "$r" in .|"") echo "" ;; */) echo "$r" ;; *) echo "$r/" ;; esac
@@ -248,29 +254,58 @@ load() { # <cache> <version> <name>
   if ! git -C "$cache" -c core.quotePath=false ls-tree -r "$(treeish "$v")" ${root:+-- "$root"} >"$out.tree" 2>"$tmp/git.err"; then
     cat "$tmp/git.err" >&2; die "can't read release $v"
   fi
-  awk -F '\t' -v root="$root" '{ split($1, m, " "); path = substr($2, length(root) + 1)
-      if (path ~ /[[:space:]"\\]/) { print "agd: kit paths can'\''t contain spaces or quotes: " path > "/dev/stderr"; bad = 1 }
-      print m[1], m[3], path }
-    END { exit bad }' "$out.tree" >"$out.blobs" || die "release $v can't be installed"
+  kit_blobs "$root" "$out.tree" >"$out.blobs" || die "release $v can't be installed"
   if git -C "$cache" show "$(treeish "$v"):packs.txt" >"$out.txt" 2>/dev/null; then
-    awk '/^[ \t]*(#|$)/ { next }
-      /^[ \t]/ { if (pack != "") print "entry", pack, $1; next }
-      $1 == "min-agd" { print "min", $2; next }
-      $1 == "pack" { pack = $2; line = "pack " $2; for (i = 4; i <= NF; i++) line = line " " $i; print line }' \
-      "$out.txt" >"$out.packs"
+    parse_packs "$out.txt" >"$out.packs"
   else
     # Releases before packs.txt (0.1.0 to 0.3.0) are one pack, core, with every file.
     printf 'pack core\nentry core\n' >"$out.packs"
   fi
-  # A path ending in / takes every file under it; an empty entry takes every file.
-  awk 'FILENAME == ARGV[1] { if ($1 == "entry") { n++; owner[n] = $2; entry[n] = $3 } next }
-    { for (i = 1; i <= n; i++) { e = entry[i]
-        if (e == "" || $3 == e || (substr(e, length(e)) == "/" && substr($3, 1, length(e)) == e)) { print owner[i], $0; break } } }' \
-    "$out.packs" "$out.blobs" >"$out.files"
+  assign_files "$out.packs" "$out.blobs" >"$out.files"
   min=$(awk '$1 == "min" { print $2 }' "$out.packs")
   if [ -n "$min" ] && newer "$min" "$version"; then
     die "release $v needs agd $min or newer, and this is agd $version: upgrade agd with brew upgrade agd, or as https://zejnilovic.github.io/agd/install/ says"
   fi
+}
+
+# load() and agd check read a source with these, so what check accepts is what agd installs.
+kit_blobs() { # <root> <ls-tree -r output>: prints "<mode> <blob> <path>", the path relative to the root; fails, naming
+  # each path agd refuses on stderr, when one has spaces, quotes or backslashes
+  awk -F '\t' -v root="$1" '{ split($1, m, " "); path = substr($2, length(root) + 1)
+      if (path ~ /[[:space:]"\\]/) { print "agd: kit paths can'\''t contain spaces or quotes: " path > "/dev/stderr"; bad = 1 }
+      print m[1], m[3], path }
+    END { exit bad }' "$2"
+}
+
+parse_packs() { # <packs.txt>: prints "min <version> <line>", "pack <name> <required>...", "at <line> <pack>" and
+  # "entry <pack> <path> <line>", plus "problem <line> error|warning <text>" for what installs ignore, for agd check
+  awk '/^[ \t]*(#|$)/ { next }
+    /^[ \t]/ {
+      if (pack == "") { print "problem", NR, "error", "the path " $1 " comes before any pack line"; next }
+      print "entry", pack, $1, NR
+      if (NF > 1) print "problem", NR, "error", "one path per line, and paths can'\''t contain spaces: " $1 " " $2
+      next }
+    $1 == "min-agd" {
+      print "min", $2, NR
+      if ($2 !~ /^[0-9]+\.[0-9]+\.[0-9]+$/ || NF > 2) print "problem", NR, "error", "min-agd needs a version such as 0.4.0"
+      next }
+    $1 == "root" { if (NF != 2) print "problem", NR, "error", "root needs one folder, such as kit/ or ."; next }
+    $1 == "pack" {
+      if (NF < 2 || (NF > 2 && $3 != "requires") || NF == 3) {
+        print "problem", NR, "error", "a pack line is pack <name>, or pack <name> requires <pack>..."
+      }
+      if (NF >= 2 && seen[$2]++) print "problem", NR, "error", "a second pack named " $2
+      pack = $2; line = "pack " $2; for (i = 4; i <= NF; i++) line = line " " $i; print line; print "at", NR, $2
+      next }
+    { print "problem", NR, "warning", $1 " isn'\''t a line this agd knows, so installs ignore it (for a newer agd, or a typo?)" }' "$1"
+}
+
+assign_files() { # <parsed packs> <blobs> [all]: prints "<pack> <mode> <blob> <path>" for each file in a pack, the first
+  # pack that names it, or with all, every pack. A path ending in / takes every file under it; an empty entry every file.
+  awk -v all="${3:-}" 'FILENAME == ARGV[1] { if ($1 == "entry") { n++; owner[n] = $2; entry[n] = $3 } next }
+    { for (i = 1; i <= n; i++) { e = entry[i]
+        if (e == "" || $3 == e || (substr(e, length(e)) == "/" && substr($3, 1, length(e)) == e)) { print owner[i], $0; if (all == "") break } } }' \
+    "$1" "$2"
 }
 
 with_requirements() { # <packs file> <pack>...: prints the packs and every pack they need, sorted
@@ -1204,6 +1239,95 @@ cmd_reset() {
   echo "Reset $(count "$n" file). Review the changes with git diff, and commit $lock_file with them."
 }
 
+# agd check reads a source's working tree, with the parsing load() uses, and writes nothing.
+cmd_check() {
+  local top root where n packs files errors warnings
+  top=$(cd "$project" && cd "${arg:-.}" 2>/dev/null && pwd) || die "no folder ${arg:-.}"
+  top=$(git -C "$top" rev-parse --show-toplevel 2>/dev/null </dev/null) || die "$top isn't a git repository"
+  : >"$tmp/problems"
+  if [ -f "$top/packs.txt" ]; then
+    parse_packs "$top/packs.txt" >"$tmp/c.packs"
+    root=$(packs_root <"$top/packs.txt")
+  else
+    echo "warning  no packs.txt, so every file under kit/ is one pack, core" >>"$tmp/problems"
+    printf 'pack core\nentry core\n' >"$tmp/c.packs"
+    root=kit/
+  fi
+  where=${root:-"the repository root"}
+  awk '$1 == "problem" { n = $2; kind = $3; $1 = $2 = $3 = ""; sub(/^ +/, ""); printf "%-8s packs.txt:%s: %s\n", kind, n, $0 }' \
+    "$tmp/c.packs" >>"$tmp/problems"
+  if [ -n "$root" ] && [ ! -d "$top/$root" ]; then
+    echo "error    packs.txt: the root folder $root doesn't exist" >>"$tmp/problems"
+  fi
+
+  # The files a commit would hold now, tracked or new, as ls-tree prints them.
+  git -C "$top" -c core.quotePath=false ls-files -co --exclude-standard ${root:+-- "$root"} </dev/null | while IFS= read -r path; do
+    [ -f "$top/$path" ] && printf '100644 blob -\t%s\n' "$path"
+  done >"$tmp/c.tree"
+  kit_blobs "$root" "$tmp/c.tree" 2>"$tmp/c.bad" >"$tmp/c.blobs"
+  sed -n "s/^agd: kit paths can't contain spaces or quotes: \(.*\)$/error    \1: kit paths can't contain spaces, quotes or backslashes/p" \
+    "$tmp/c.bad" >>"$tmp/problems"
+  assign_files "$tmp/c.packs" "$tmp/c.blobs" all >"$tmp/c.files"
+
+  # Each pack's paths: a file, or a folder ending in / with files under it.
+  awk -v where="$where" 'FILENAME == ARGV[1] { file[$3] = 1; n = split($3, d, "/"); dir = ""
+      for (i = 1; i < n; i++) { dir = dir d[i] "/"; folder[dir] = 1 } next }
+    $1 == "entry" && $3 != "" { e = $3
+      if (substr(e, length(e)) == "/") {
+        if (!(e in folder)) {
+          if (substr(e, 1, length(e) - 1) in file) printf "error    packs.txt:%s: %s is a file, so drop the / at its end\n", $4, e
+          else printf "error    packs.txt:%s: no folder %s with files in %s\n", $4, e, where }
+      } else if (!(e in file)) {
+        if ((e "/") in folder) printf "error    packs.txt:%s: %s is a folder, so end it with /\n", $4, e
+        else printf "error    packs.txt:%s: %s doesn'\''t exist in %s\n", $4, e, where } }' \
+    "$tmp/c.blobs" "$tmp/c.packs" >>"$tmp/problems"
+  # A file in two packs, and files in no pack, unless the root is the repository's, where those stay out on purpose.
+  awk '{ owners[$4] = owners[$4] (owners[$4] == "" ? "" : " and ") $1; count[$4]++ }
+    END { for (p in count) if (count[p] > 1) printf "error    %s is in more than one pack: %s\n", p, owners[p] }' \
+    "$tmp/c.files" | LC_ALL=C sort >>"$tmp/problems"
+  [ -z "$root" ] || awk 'FILENAME == ARGV[1] { owned[$4] = 1; next } !($3 in owned) { printf "warning  %s is in no pack, so it isn'\''t installed\n", $3 }' \
+    "$tmp/c.files" "$tmp/c.blobs" >>"$tmp/problems"
+  # Requirements: a pack of this source, or <source>:<pack>; no cycles; and packs without files.
+  awk '$1 == "at" { at[$3] = $2 } $1 == "pack" { known[$2] = 1; reqs[$2] = ""; for (i = 3; i <= NF; i++) reqs[$2] = reqs[$2] " " $i }
+    $1 == "entry" { has[$2] = 1 }
+    function visit(p, path,   k, m, part) {
+      if (state[p] == 1) { cycle = path " " p; return 1 }
+      if (state[p] == 2) return 0
+      state[p] = 1
+      m = split(reqs[p], part, " ")
+      for (k = 1; k <= m; k++) if ((part[k] in known) && visit(part[k], path " " p)) return 1
+      state[p] = 2
+      return 0 }
+    END {
+      for (p in known) { m = split(reqs[p], part, " ")
+        for (k = 1; k <= m; k++) if (part[k] !~ /:/ && !(part[k] in known))
+          printf "error    packs.txt:%s: pack %s requires %s, which isn'\''t a pack here (another source'\''s is <source>:<pack>)\n", at[p], p, part[k]
+        if (!(p in has)) printf "warning  packs.txt:%s: pack %s has no files\n", at[p], p }
+      for (p in known) if (visit(p, "")) { sub(/^ /, "", cycle); gsub(/ /, " requires ", cycle); print "error    packs.txt: a requires cycle: " cycle; exit } }' \
+    "$tmp/c.packs" | LC_ALL=C sort -t: -k2,2n >>"$tmp/problems"
+  # Releases and min-agd.
+  [ -n "$(releases "$top")" ] \
+    || echo "error    no release tag yet: tag one as v<major.minor.patch>, for example git tag v0.1.0" >>"$tmp/problems"
+  set -- $(awk '$1 == "min" { print $2, $3; exit }' "$tmp/c.packs")
+  if [ $# = 2 ] && newer "$1" "$version"; then
+    echo "error    packs.txt:$2: min-agd $1 is newer than this agd, $version, so it can't check or install this source" >>"$tmp/problems"
+  fi
+
+  cat "$tmp/problems"
+  errors=$(grep -c '^error ' "$tmp/problems")
+  warnings=$(grep -c '^warning ' "$tmp/problems")
+  packs=$(awk '$1 == "pack" { print $2 }' "$tmp/c.packs" | LC_ALL=C sort -u | grep -c .)
+  files=$(awk '{ print $4 }' "$tmp/c.files" | LC_ALL=C sort -u | grep -c .)
+  if [ "$errors" -gt 0 ]; then
+    echo "$(count "$errors" error) and $(count "$warnings" warning) in $top."
+    exit 1
+  elif [ "$warnings" -gt 0 ]; then
+    echo "No errors: $(count "$packs" pack), $(count "$files" file), and $(count "$warnings" warning) above."
+  else
+    echo "No problems: $(count "$packs" pack), $(count "$files" file)."
+  fi
+}
+
 cmd_uninstall() {
   need_lock
   local name url v path sha rest="" answer what deleting kept=0
@@ -1601,7 +1725,7 @@ cmd_complete() { # <word>... <word at the cursor>
       return ;;
   esac
   case "$cmd:$n" in
-    :0) printf '%s\n' init adopt status update add remove diff merge reset source uninstall feedback completion ;;
+    :0) printf '%s\n' init adopt status update add remove diff merge reset source uninstall check feedback completion ;;
     init:0|adopt:0)
       case "$cur" in
         *@*)
@@ -1615,6 +1739,7 @@ cmd_complete() { # <word>... <word at the cursor>
     source:0) printf '%s\n' list remove ;;
     source:1) [ "$first" != remove ] || [ ! -f "$project/$lock_file" ] || awk '$1 == "source" { print $2 }' "$project/$lock_file" ;;
     feedback:0) echo :files ;;
+    check:0) echo :dirs ;;
     completion:0) printf '%s\n' bash zsh ;;
   esac
 }
@@ -1632,6 +1757,7 @@ case "$command" in
   merge) cmd_merge ;;
   reset) cmd_reset ;;
   uninstall) cmd_uninstall ;;
+  check) cmd_check ;;
   completion) cmd_completion ;;
   __complete) shift; cmd_complete "$@" ;;
   "") usage >&2; exit 2 ;;

@@ -1323,6 +1323,92 @@ class AgdMovedTagTest(AgdCase):
         self.assertEqual(self.lock_lines("commit"), [f"commit agentic-defaults {self.was}"])
 
 
+class AgdCheckTest(AgdCase):
+    """agd check: validates a source's working tree before a release."""
+
+    def setUp(self):
+        super().setUp()
+        self.release("1.0.0")
+
+    def check(self, packs=None, files=None):
+        """Changes the source's working tree, without committing, and checks it."""
+        if packs is not None:
+            write(self.source, "packs.txt", packs)
+        for rel, text in (files or {}).items():
+            write(self.source, rel, text)
+        return subprocess.run([BASH, str(AGD), "check", str(self.source)], env=self.env,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True)
+
+    def test_a_clean_source_passes_and_check_writes_nothing(self):
+        before = run(["git", "status", "--porcelain"], self.source).stdout
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("No problems: 3 packs, 9 files", result.stdout)
+        self.assertEqual(run(["git", "status", "--porcelain"], self.source).stdout, before)
+        self.assertFalse(self.cache.exists())
+
+    def test_check_defaults_to_the_current_folder(self):
+        result = subprocess.run([BASH, str(AGD), "check"], cwd=self.source, env=self.env,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_each_error_is_one_line_and_fails_the_check(self):
+        core = "pack core\n  AGENTS.md\n  CLAUDE.md\n  .claude/agents/developer.md\n  .claude/skills/implementation/\n"
+        rest = ("pack flask requires core\n  .claude/agents/flask-developer.md\n  .claude/skills/flask/\n"
+                "pack react requires core\n  .claude/agents/react-developer.md\n  .claude/skills/react/\n")
+        cases = {
+            "missing path": (core.replace("CLAUDE.md", "CLAUD.md") + rest, {}, r"packs.txt:3: .*CLAUD\.md"),
+            "folder without /": (core.replace("implementation/", "implementation") + rest, {},
+                                 r"packs.txt:5: .*implementation.* folder"),
+            "file with /": (core.replace("CLAUDE.md", "CLAUDE.md/") + rest, {}, r"packs.txt:3: .*CLAUDE\.md/"),
+            "two packs": (core + rest + "pack extra\n  AGENTS.md\n", {}, r"AGENTS\.md.*core.*extra"),
+            "unknown pack": (core + rest.replace("requires core", "requires cor", 1), {}, r"packs.txt:6: .*cor\b"),
+            "cycle": (core.replace("pack core", "pack core requires react") + rest, {}, r"cycle"),
+            "path before a pack": ("  AGENTS.md\n" + core + rest, {}, r"packs.txt:1: "),
+            "bad pack line": (core + rest.replace("pack flask requires core", "pack flask needs core"), {},
+                              r"packs.txt:6: "),
+            "duplicate pack": (core + rest + "pack core\n", {}, r"packs.txt:12: .*core"),
+            "space in a path": (None, {"kit/.claude/skills/flask/my notes.md": "x\n"}, r"my notes\.md"),
+            "newer min-agd": ("min-agd 99.0.0\n" + core + rest, {}, r"99\.0\.0"),
+        }
+        for name, (packs, files, message) in cases.items():
+            with self.subTest(name):
+                run(["git", "checkout", "-q", "--", "."], self.source)
+                run(["git", "clean", "-qfd"], self.source)
+                result = self.check(packs, files)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                errors = [line for line in result.stdout.splitlines() if line.startswith("error ")]
+                self.assertEqual(len(errors), 1, result.stdout)
+                self.assertRegex(errors[0], message)
+
+    def test_warnings_dont_fail_the_check(self):
+        result = self.check(self.PACKS.replace("pack react requires core\n  .claude/agents/react-developer.md\n",
+                                               "future-line yes\npack react requires core\n")
+                            + "pack empty requires other-source:core\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        warnings = [line for line in result.stdout.splitlines() if line.startswith("warning ")]
+        self.assertEqual(len(warnings), 3, result.stdout)
+        for text in ("packs.txt:13: future-line", "react-developer.md", "empty"):
+            self.assertIn(text, result.stdout)
+
+    def test_a_source_at_the_repository_root_doesnt_warn_about_its_other_files(self):
+        result = self.check("root .\n\npack core\n  kit/AGENTS.md\n", {"README.md": "Read me.\n"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("No problems: 1 pack, 1 file", result.stdout)
+
+    def test_a_source_needs_a_release_tag(self):
+        run(["git", "tag", "-d", "v1.0.0"], self.source)
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertRegex(result.stdout, r"error .*v<major\.minor\.patch>")
+
+    def test_a_folder_that_isnt_a_git_repository_stops(self):
+        result = subprocess.run([BASH, str(AGD), "check", str(self.project)], env=self.env,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("isn't a git repository", result.stderr)
+
+
 class AgdResolveTest(AgdCase):
     """agd diff, merge and reset, on a project set up from 1.0.0 with a five-line developer agent."""
 
@@ -1851,6 +1937,8 @@ class AgdCompletionTest(AgdCase):
         self.assertEqual(self.complete("source", ""), ["list", "remove"])
         self.assertIn("uninstall", commands)
         self.assertEqual(self.complete("uninstall", "-"), ["--offline", "--yes", "-C"])
+        self.assertIn("check", commands)
+        self.assertEqual(self.complete("check", ""), [":dirs"])
 
     def test_offers_the_packs_paths_sources_and_releases_of_the_project(self):
         self.assertEqual(self.complete("add", ""), ["react"])
