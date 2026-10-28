@@ -114,6 +114,14 @@ shasum -a 256 -c --ignore-missing SHA256SUMS
 
 On Linux and in Git Bash, `sha256sum -c --ignore-missing SHA256SUMS` does the same.
 
+A checksum shows the download isn't corrupt, not who built it. From 0.4.0 on, each release's `agd`, `agd-<version>.tar.gz` and `SHA256SUMS` also have a build provenance attestation: a signed record that this repository's Release workflow built them, from which commit. With the [GitHub CLI](https://cli.github.com), check the file you downloaded:
+
+```bash
+gh attestation verify agd --repo Zejnilovic/agd
+```
+
+It fails unless the file is exactly what the Release workflow of `Zejnilovic/agd` built. `install.sh` doesn't run this check, since it can't count on `gh`; the Release workflow runs it on Linux, macOS and Windows for every release.
+
 ## Windows
 
 Run agd in Git Bash, which comes with [Git for Windows](https://git-scm.com/download/win), or in WSL. Install it there with the install script, by hand, or from a clone. In Git Bash, add `~/.local/bin` to the `PATH` in `~/.bashrc` as [shown above](#put-agd-on-your-path).

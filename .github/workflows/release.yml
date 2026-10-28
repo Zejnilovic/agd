@@ -1,9 +1,11 @@
 name: Release
 
 # Releases VERSION: dates its CHANGELOG.md entry, tags the release commit v<version>, creates the GitHub
-# release with the archive agd-<version>.tar.gz, the plain script agd and their SHA256SUMS, and points the
-# formula in Zejnilovic/homebrew-tap at the archive. Then it installs the release every documented way.
-# Start it from the Actions tab. A dry run does everything but push, and shows the notes and the formula.
+# release with the archive agd-<version>.tar.gz, the plain script agd and their SHA256SUMS, attests that this
+# workflow built them, and points the formula in Zejnilovic/homebrew-tap at the archive. Then it installs the
+# release every documented way, and checks the plain script's attestation.
+# Start it from the Actions tab. A dry run does everything but push, and shows the notes and the formula; it
+# attests the files it built too, so the attestation is tested before a release.
 on:
   workflow_dispatch:
     inputs:
@@ -23,6 +25,11 @@ jobs:
     # Release only from the default branch, never from a feature branch.
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Build provenance: a Sigstore certificate from the OIDC token, stored as the repository's attestation.
+      id-token: write
+      attestations: write
     outputs:
       version: ${{ steps.prepare.outputs.version }}
     steps:
@@ -54,6 +61,14 @@ jobs:
           git show "v$VERSION:bin/agd" > "$DIST/agd"
           (cd "$DIST" && sha256sum "agd-$VERSION.tar.gz" agd > SHA256SUMS)
           echo "SHA256=$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+      # actions/attest makes SLSA build provenance; actions/attest-build-provenance is now a wrapper of it.
+      - name: Attest the release files
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ env.DIST }}/agd
+            ${{ env.ARCHIVE }}
+            ${{ env.DIST }}/SHA256SUMS
       - name: Write the formula
         run: |
           git clone -q --depth 1 https://github.com/Zejnilovic/homebrew-tap.git "$RUNNER_TEMP/tap"
@@ -109,6 +124,9 @@ jobs:
         # Windows runs these steps in Git Bash.
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      attestations: read
     defaults:
       run:
         shell: bash
@@ -126,3 +144,7 @@ jobs:
           curl -fsSLO https://github.com/Zejnilovic/agd/releases/latest/download/SHA256SUMS
           if command -v sha256sum >/dev/null; then sha256sum -c --ignore-missing SHA256SUMS; else shasum -a 256 -c --ignore-missing SHA256SUMS; fi
           test "$(bash agd --version)" = "agd $VERSION"
+      - name: Check that this repository's Release workflow built the plain script
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh attestation verify "$RUNNER_TEMP/plain/agd" --repo Zejnilovic/agd
