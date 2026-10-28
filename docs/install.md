@@ -120,7 +120,7 @@ A checksum shows the download isn't corrupt, not who built it. From 0.4.0 on, ea
 gh attestation verify agd --repo Zejnilovic/agd
 ```
 
-It fails unless the file is exactly what the Release workflow of `Zejnilovic/agd` built. `install.sh` doesn't run this check, since it can't count on `gh`; the Release workflow runs it on Linux, macOS and Windows for every release.
+On success it ends with `✓ Verification succeeded!` and names `.github/workflows/release.yml` as the build workflow. For any other file it exits with a non-zero code. The repository's [attestations](https://github.com/Zejnilovic/agd/attestations) list every release's, and GitHub's guide shows how to [verify artifact attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds#verifying-artifact-attestations-with-the-github-cli). `install.sh` doesn't run this check, since it can't count on `gh`; the Release workflow runs it on Linux, macOS and Windows for every release.
 
 ## Windows
 
