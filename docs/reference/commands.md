@@ -51,6 +51,8 @@ agd update [--to <version>|<commit>]
 
 Updates every source to its latest release, keeping the project parts of each file and leaving edited files alone. `--to` moves to the given release, newer or older, or to a commit; it works when the project has one source.
 
+If an installed release's tag has moved to another commit since it was installed, `update` stops and shows the change, as do `status`, `add`, `remove`, `diff`, `merge` and `reset`. `--to <version>` accepts the release as it is now. See [When a release changes after you installed it](../guides/updates.md#when-a-release-changes-after-you-installed-it).
+
 ## add
 
 ```text

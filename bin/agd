@@ -156,6 +156,50 @@ newest() { # <cache> <installed>: the latest release, or what is installed when 
   echo "${now:-$2}"
 }
 
+# A source can force-move a release's tag. The lock records the commit each release was installed from
+# ("commit <source> <sha>"), and commands that read the installed release stop when its tag has moved.
+tag_commit() { git -C "$1" rev-parse -q --verify "refs/tags/v$2^{commit}" </dev/null; }  # <cache> <version>
+
+check_tag() { # <name> <url> <cache> <version>: stops, showing the change to the installed files, when the tag has moved
+  local was now root
+  is_commit "$4" && return 0
+  was=$(awk -v s="$1" '$1 == "commit" && $2 == s { print $3; exit }' "$project/$lock_file")
+  now=$(tag_commit "$3" "$4")
+  if [ -z "$was" ] || [ "$was" = "$now" ]; then return 0; fi
+  echo "$1 $4 has changed since it was installed: its tag v$4 pointed at $was, and now points at ${now:-no commit}."
+  if [ -n "$now" ]; then
+    git -C "$3" cat-file -e "$was^{commit}" 2>/dev/null </dev/null || [ "$offline" = 1 ] \
+      || git -C "$3" fetch -q "$2" "$was" </dev/null 2>/dev/null
+    if git -C "$3" cat-file -e "$was^{commit}" 2>/dev/null </dev/null; then
+      root=$(root_of "$3" "$4")
+      awk -v s="$1" -v r="$root" '$1 == "file" && $2 == s { print r $3 }' "$project/$lock_file" >"$tmp/moved.paths"
+      git -C "$3" --no-pager diff "$was" "$now" -- $(cat "$tmp/moved.paths") </dev/null >"$tmp/moved.diff"
+      if [ -s "$tmp/moved.diff" ]; then
+        echo "The change to the installed files:"
+        cat "$tmp/moved.diff"
+      else
+        echo "None of the installed files changed."
+      fi
+    else
+      echo "The cache no longer has $was, so agd can't show the change."
+    fi
+  fi
+  die "a moved tag can change files you reviewed, so agd stops. If you trust the change, run agd update --to $4; otherwise ask the source why the tag moved"
+}
+
+lock_commits() { # the commit line of each release in $tmp/lock.sources: from $tmp/accepted, else the lock's for the same release, else its tag's
+  local name url v sha
+  touch "$tmp/accepted"
+  while read -r _ name url v; do
+    is_commit "$v" && continue
+    sha=$(awk -v s="$name" '$1 == s { print $2; exit }' "$tmp/accepted")
+    [ -n "$sha" ] || [ ! -f "$project/$lock_file" ] || sha=$(awk -v s="$name" -v v="$v" '
+      $1 == "source" && $2 == s && $4 == v { same = 1 } $1 == "commit" && $2 == s { c = $3 } END { if (same) print c }' "$project/$lock_file")
+    [ -n "$sha" ] || sha=$(tag_commit "$(cache_of "$url")" "$v")
+    [ -z "$sha" ] || echo "commit $name $sha"
+  done <"$tmp/lock.sources"
+}
+
 newer() { # <a> <b>: succeeds when version a is newer than version b; a commit is never newer or older
   if is_commit "$1" || is_commit "$2"; then return 1; fi
   awk -v a="$1" -v b="$2" 'BEGIN { split(a, x, "."); split(b, y, ".")
@@ -466,10 +510,12 @@ dropped() { # <kit path> <project file> <kit file>: what a reset drops, for its 
 }
 
 write_lock() { # from $tmp/lock.sources, $tmp/lock.packs and $tmp/lock.files
+  lock_commits >"$tmp/lock.commits"
   {
     echo "# Written by agd. Commit it, and don't edit it by hand."
     echo "agd-lock 1"
     cat "$tmp/lock.sources"
+    cat "$tmp/lock.commits"
     LC_ALL=C sort "$tmp/lock.packs"
     LC_ALL=C sort "$tmp/lock.files"
   } >"$project/$lock_file"
@@ -789,6 +835,7 @@ cmd_status() {
   while read -r name url v; do
     cache=$(cache_of "$url")
     refresh "$url" "$cache"
+    check_tag "$name" "$url" "$cache" "$v"
     now=$(latest "$cache")
     if is_commit "$v" && [ -n "$now" ]; then
       echo "$name is installed at $(label "$v"), and its latest release is $now: agd update moves to it."
@@ -841,7 +888,10 @@ cmd_update() {
     refresh "$url" "$cache"
     if [ -n "$to" ]; then
       target=$(resolve_ref "$url" "$cache" "$to") || exit 2
+      # Naming the release accepts its tag as it is now, even if it moved.
+      is_commit "$target" || echo "$name $(tag_commit "$cache" "$target")" >>"$tmp/accepted"
     else
+      check_tag "$name" "$url" "$cache" "$v"
       target=$(newest "$cache" "$v")
     fi
     if newer "$target" "$v"; then notes "$url" "$v" "$target" "$cache"; fi
@@ -898,6 +948,7 @@ find_pack() { # <[source:]pack>
     [ -z "$only" ] || [ "$name" = "$only" ] || continue
     cache=$(cache_of "$url")
     [ -d "$cache" ] || refresh "$url" "$cache"
+    check_tag "$name" "$url" "$cache" "$v"
     load "$cache" "$v" "pk.$name"
     all="$all $(awk '$1 == "pack" { printf " %s", $2 }' "$tmp/pk.$name.packs")"
     awk -v p="$want" '$1 == "pack" && $2 == p { found = 1 } END { exit !found }' "$tmp/pk.$name.packs" || continue
@@ -1007,6 +1058,7 @@ cmd_diff() {
   url=$1 v=$2
   cache=$(cache_of "$url")
   refresh "$url" "$cache"
+  check_tag "$name" "$url" "$cache" "$v"
   now=$(newest "$cache" "$v")
   d=$tmp/diff
   mkdir -p "$d/installed/$(dirname "$path")" "$d/yours/$(dirname "$path")" "$d/kit-$now/$(dirname "$path")"
@@ -1047,6 +1099,7 @@ cmd_merge() {
   [ -e "$dst" ] || die "$path is deleted here: agd reset $path brings it back"
   cache=$(cache_of "$url")
   refresh "$url" "$cache"
+  check_tag "$name" "$url" "$cache" "$v"
   now=$(newest "$cache" "$v")
   new=$(git -C "$cache" rev-parse -q --verify "$(treeish "$now"):$(root_of "$cache" "$now")$path" </dev/null) \
     || die "$name $(label "$now") no longer has $path: agd update decides what happens to it"
@@ -1088,6 +1141,7 @@ cmd_reset() {
   while read -r name url v; do
     cache=$(cache_of "$url")
     refresh "$url" "$cache"
+    check_tag "$name" "$url" "$cache" "$v"
     load "$cache" "$v" release
     awk -v s="$name" '$1 == "file" && $2 == s { print $3 }' "$project/$lock_file" >"$tmp/locked"
     while read -r path; do

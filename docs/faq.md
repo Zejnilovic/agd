@@ -17,7 +17,7 @@ Mostly. Cursor reads the folders agentic-defaults installs, but not every line i
 
 ## Does agd run code from a source?
 
-No. agd only copies files, and never runs anything it installs. Scripts and hooks a source ships run only when an agent or a person runs them, as with any file in your repository, so review a source's releases as you would review a dependency.
+No. agd only copies files, and never runs anything it installs. Scripts and hooks a source ships run only when an agent or a person runs them, as with any file in your repository, so review a source's releases as you would review a dependency. If a source moves a release's tag after you installed it, agd stops and shows the change before using it: see [When a release changes](guides/updates.md#when-a-release-changes-after-you-installed-it).
 
 ## Why not copy the files, or use a git submodule?
 

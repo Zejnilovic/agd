@@ -1215,6 +1215,68 @@ class AgdUpdateTest(AgdCase):
         self.assertNotIn("vue", self.status())
 
 
+class AgdMovedTagTest(AgdCase):
+    """A source force-moves the tag of an installed release."""
+
+    DEV = ".claude/agents/developer.md"
+
+    def setUp(self):
+        super().setUp()
+        self.release("1.0.0")
+        self.assertEqual(self.agd("init").returncode, 0)
+        self.was = self.commit("v1.0.0")
+
+    def commit(self, ref):
+        return run(["git", "rev-parse", f"{ref}^{{commit}}"], self.source).stdout.strip()
+
+    def move_tag(self):
+        write(self.source, f"kit/{self.DEV}", self.KIT[self.DEV].replace("Developer rules.", "Sneaky rules."))
+        run(["git", "commit", "-qam", "moved"], self.source)
+        run(["git", "tag", "-f", "v1.0.0"], self.source)
+        return self.commit("v1.0.0")
+
+    def lock(self):
+        return (self.project / ".agd.lock").read_text()
+
+    def test_init_records_the_commit_behind_the_release(self):
+        self.assertEqual(self.lock_lines("commit"), [f"commit agentic-defaults {self.was}"])
+
+    def test_a_commit_install_needs_no_commit_line(self):
+        self.assertEqual(self.agd("update", "--to", self.was).returncode, 0)
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} {self.was}"])
+        self.assertEqual(self.lock_lines("commit"), [])
+
+    def test_commands_that_read_the_release_stop_with_both_commits_and_the_change(self):
+        now, before = self.move_tag(), self.lock()
+        for args in (["status"], ["update"], ["reset", "--yes"], ["diff", self.DEV], ["remove", "flask"]):
+            result = self.agd(*args)
+            self.assertEqual(result.returncode, 2, args)
+            output = result.stdout + result.stderr
+            for text in (self.was, now, "-Developer rules.", "+Sneaky rules.", "agd update --to 1.0.0"):
+                self.assertIn(text, output, args)
+            self.assertEqual(self.lock(), before, args)
+            self.assertIn("Developer rules.", (self.project / self.DEV).read_text(), args)
+
+    def test_update_to_the_release_accepts_the_moved_tag(self):
+        now = self.move_tag()
+        result = self.agd("update", "--to", "1.0.0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Sneaky rules.", (self.project / self.DEV).read_text())
+        self.assertEqual(self.lock_lines("commit"), [f"commit agentic-defaults {now}"])
+        self.assertEqual(self.agd("status").returncode, 0)
+
+    def test_a_lock_without_the_commit_is_read_and_gains_it_on_the_next_write(self):
+        (self.project / ".agd.lock").write_text(
+            "".join(line + "\n" for line in self.lock().splitlines() if not line.startswith("commit ")))
+        result = self.agd("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("moved", result.stdout + result.stderr)
+        self.assertEqual(self.lock_lines("commit"), [])
+        result = self.agd("remove", "flask")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lock_lines("commit"), [f"commit agentic-defaults {self.was}"])
+
+
 class AgdResolveTest(AgdCase):
     """agd diff, merge and reset, on a project set up from 1.0.0 with a five-line developer agent."""
 

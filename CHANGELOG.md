@@ -7,6 +7,7 @@ Version numbers: **major** when the lock or `packs.txt` format changes and proje
 ## 0.4.0 (unreleased)
 
 - `agd init` in a terminal asks which packs to install, unless `--with` names them. It lists each pack with its file count, the packs it needs and its agents and skills; you type numbers or names, or press Enter for every pack. With fzf installed, you pick them in fzf (Esc installs nothing). Packs come with the packs they require, and agd says which it added. Without a terminal, or with `--yes`, agd installs every pack as before, so scripts are unchanged.
+- agd notices when a source moves a release's tag. `.agd.lock` records the commit behind each installed release in a new `commit <source> <sha>` line, and `status`, `update`, `add`, `remove`, `diff`, `merge` and `reset` stop when the tag points elsewhere, printing both commits and the change to the installed files. `agd update --to <version>` accepts the release as it is now. A lock without the line gets it the next time agd writes the lock, without a warning. It stays `agd-lock 1`: older agd reads it, and drops the line when it rewrites the lock.
 - `agd uninstall` takes agd out of a project in one step: it removes every source, deletes the installed files you haven't changed and `.agd.lock`, and leaves `.agd-ignore` and the cache. It lists what it will do first, asks about each file you changed (delete it, or keep it as yours) and asks once more before writing anything. Without a terminal it needs `--yes`, which keeps every changed file.
 
 ## 0.3.0 (2026-10-27)

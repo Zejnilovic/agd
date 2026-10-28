@@ -8,6 +8,7 @@ agd writes `.agd.lock` at the project's root. Commit it, and don't edit it by ha
 # Written by agd. Commit it, and don't edit it by hand.
 agd-lock 1
 source agentic-defaults https://github.com/Zejnilovic/agentic-defaults.git 0.3.0
+commit agentic-defaults 5413fcaa4ec8ad7af05f0681dae5921134dd19cf
 pack agentic-defaults core
 file agentic-defaults .claude/agents/analyst.md e1b12281e462c4424bd5b78bb8c4320d809f39f8
 file agentic-defaults .claude/agents/architect.md 5d5bd7379bfe89bbd35c527f7930bfcd95f6711a
@@ -18,10 +19,11 @@ file agentic-defaults .claude/agents/architect.md 5d5bd7379bfe89bbd35c527f7930bf
 |---|---|
 | `agd-lock 1` | The format's version. |
 | `source <name> <url> <version>` | A source, and its installed release, or the full SHA of its installed commit. |
+| `commit <source> <sha>` | The commit a release's tag pointed at when it was installed, so agd can tell when the tag moves. None for a source installed at a commit. |
 | `pack <source> <pack>` | An installed pack. |
 | `file <source> <path> <blob>` | An installed file, and the git blob hash of the content agd installed. |
 
-agd sorts the lines, so changes to the lock read well in a review.
+agd sorts the lines, so changes to the lock read well in a review. A lock from agd before 0.4.0 has no `commit` lines; agd adds them the next time it writes the lock. Older agd still reads a lock with them, but drops them when it rewrites the lock.
 
 ## .agd-ignore
 
