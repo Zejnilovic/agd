@@ -21,8 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # A pinned agd release, and the SHA-256 of its agd file from the release's SHA256SUMS.
-      AGD_VERSION: 0.3.0
-      AGD_SHA256: 0a83043c533faea476e9f454eadf7ed693cf31296748f41540ab6321fc24978f
+      AGD_VERSION: 0.5.0
+      AGD_SHA256: c0aab28e39ffbd8a6b38ca859802d010915505f2ec9a3871ed068d3891bbd03b
       BRANCH: agd-update
     steps:
       - uses: actions/checkout@v5
