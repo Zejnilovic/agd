@@ -41,6 +41,8 @@ agentic-defaults:.claude/agents/reviewer.md
 - **A path or pattern** keeps the path out of every source. In a pattern, `*` matches any characters, `/` included, and `?` one character. To match a folder's files, end it with `/*`.
 - **`<source>:<path or pattern>`** keeps it out of that source only. It decides between two sources that ship the same path.
 
+In your home folder, `~/.agd-ignore` is also how you [take only a kit's skills](../guides/home.md#take-only-a-kits-skills).
+
 agd doesn't install an ignored path. When it installed the file earlier, `agd update` stops managing it, and the file stays as a project file.
 
 agd also reads `.agentic-defaults-ignore`, the file agentic-defaults' old `scripts/sync.sh` used.

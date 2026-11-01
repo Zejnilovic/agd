@@ -2,7 +2,7 @@
 # agd installs agentic-defaults, and kits laid out like it, in a project, and keeps it up to date.
 # Works with bash 3.2 (macOS) and Git Bash (Windows), and needs only git and POSIX tools.
 #
-# Usage: agd [-C <dir>] [--offline] <command>
+# Usage: agd [-C <dir> | --home] [--offline] <command>
 #   init [<source>][@<version>|@<commit>] [--with <pack>,...] [--yes]
 #                             install the latest release of agentic-defaults, or of <source>: a
 #                             GitHub owner/repo, a git URL or a local folder. @ picks a release or a
@@ -34,22 +34,25 @@
 #   completion <bash|zsh>     print the shell's tab completion script, for example for ~/.zshrc:
 #                             source <(agd completion zsh)
 #   -C <dir>                work in <dir> instead of the current folder
+#   --home                    work in your home folder, for every project on this machine. There,
+#                             init without a source installs agentic-home, and agd installs only under
+#                             .claude/, without .claude/settings.json. A kit with other files stops,
+#                             with an explanation. The same goes for -C ~ and for running in ~.
 #   --offline                 use the cached copy of each source instead of fetching it
 #   --version, --help
 #
 # Updates keep the project's parts of kit files: an agent's model: and tools: lines, and a
 # "## This project" section at the end of a Markdown file. A file changed anywhere else is left alone.
 #
-# Environment: AGD_SOURCE replaces the default source URL, and AGD_CACHE the cache folder
-# (default ~/.cache/agd).
+# Environment: AGD_SOURCE replaces the default source URL, AGD_HOME_SOURCE the home folder's
+# default source URL, and AGD_CACHE the cache folder (default ~/.cache/agd).
 #
 # Docs: https://zejnilovic.github.io/agd
 
 set -u
-version=0.4.0
+version=0.5.0
 default_name=agentic-defaults
 default_url=${AGD_SOURCE:-https://github.com/Zejnilovic/agentic-defaults.git}
-cache_root=${AGD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/agd}
 lock_file=.agd.lock
 ignore_file=.agd-ignore
 old_ignore_file=.agentic-defaults-ignore  # from scripts/sync.sh, before agd
@@ -58,12 +61,13 @@ usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' 
 die() { echo "agd: $*" >&2; exit 2; }
 count() { if [ "$1" = 1 ]; then echo "1 $2"; else echo "$1 $2s"; fi; }
 
-dir=. offline=0 command="" arg="" arg2="" with="" to="" check=0 yes=0
+dir=. named_dir=0 home=0 offline=0 command="" arg="" arg2="" with="" to="" check=0 yes=0
 # agd __complete, run by the completion scripts, reads its words in cmd_complete.
 [ "${1:-}" != __complete ] || command=__complete
 while [ "$command" != __complete ] && [ $# -gt 0 ]; do
   case "$1" in
-    -C) [ $# -ge 2 ] || die "-C needs a folder"; dir=$2; shift ;;
+    -C) [ $# -ge 2 ] || die "-C needs a folder"; dir=$2; named_dir=1; shift ;;
+    --home) home=1 ;;
     --offline) offline=1 ;;
     --with) [ $# -ge 2 ] || die "--with needs pack names, for example --with flask,react"; with=$2; shift ;;
     --with=*) with=${1#--with=} ;;
@@ -96,8 +100,20 @@ case "$command" in
   *) [ -z "$arg" ] || die "unexpected argument $arg (see agd --help)" ;;
 esac
 [ -z "$arg2" ] || [ "$command" = source ] || die "unexpected argument $arg2 (see agd --help)"
+if [ "$home" = 1 ]; then
+  [ "$named_dir" = 0 ] || die "--home and -C both name the folder: use one of them"
+  [ -n "${HOME:-}" ] || die "--home needs HOME to be set"
+  dir=$HOME
+fi
 [ -d "$dir" ] || die "no folder $dir"
 project=$(cd "$dir" && pwd)
+# The home folder has rules of its own, however it was named, because what lands there reaches every project.
+at_home=0 agd=agd taken_file="a project file" taken_files="project files"
+if [ -n "${HOME:-}" ] && [ "$(cd "$dir" && pwd -P)" = "$(cd "$HOME" 2>/dev/null && pwd -P)" ]; then
+  at_home=1 agd="agd --home" taken_file="your file" taken_files="your files"
+  default_name=agentic-home default_url=${AGD_HOME_SOURCE:-https://github.com/Zejnilovic/agentic-home.git}
+fi
+cache_root=${AGD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/agd}
 [ -z "$with" ] || [ "$command" = init ] || die "--with works only with init"
 [ -z "$to" ] || [ "$command" = update ] || die "--to works only with update"
 [ "$check" = 0 ] || [ "$command" = status ] || die "--check works only with status"
@@ -189,7 +205,7 @@ check_tag() { # <name> <url> <cache> <version>: stops, showing the change to the
   fi
   local to=$4
   [ "$(grep -c '^source ' "$project/$lock_file")" -le 1 ] || to=$1@$4
-  die "a moved tag can change files you reviewed, so agd stops. If you trust the change, run agd update --to $to; otherwise ask the source why the tag moved"
+  die "a moved tag can change files you reviewed, so agd stops. If you trust the change, run $agd update --to $to; otherwise ask the source why the tag moved"
 }
 
 lock_commits() { # the commit line of each release in $tmp/lock.sources: from $tmp/accepted, else the lock's for the same release, else its tag's
@@ -336,7 +352,7 @@ check_needs() { # <packs file> <pack>...: stops when a pack of another source th
   local need
   for need in $(needs_elsewhere "$@"); do
     grep -qx "pack ${need%%:*} ${need#*:}" "$tmp/lock.packs" \
-      || die "$need is required, but isn't installed here: install it first, for example with agd init or agd add $need"
+      || die "$need is required, but isn't installed here: install it first, for example with $agd init or $agd add $need"
   done
 }
 
@@ -477,7 +493,9 @@ examine() { # <name> <installed version> <target version> <cache>
   while read -r path mode new; do
     awk -v p="$path" '$1 == p { found = 1 } END { exit !found }' "$tmp/locked" && continue
     is_ignored "$path" "$name" && continue
-    if [ -e "$project/$path" ]; then echo "taken $path"; else echo "new $path $new $mode"; fi
+    if [ "$at_home" = 1 ] && ! home_allows "$path"; then echo "outside $path"
+    elif [ -e "$project/$path" ]; then echo "taken $path"
+    else echo "new $path $new $mode"; fi
   done <"$tmp/target.selected" >>"$tmp/actions"
 }
 
@@ -504,7 +522,17 @@ prune() { # <folder>: removes it and its parents while they are empty, up to the
   while [ "$d" != "$project" ] && [ "${d#"$project"/}" != "$d" ] && rmdir "$d" 2>/dev/null; do d=$(dirname "$d"); done
 }
 
-need_lock() { [ -f "$project/$lock_file" ] || die "no $lock_file in $project: run agd init"; }
+need_lock() { [ -f "$project/$lock_file" ] || die "no $lock_file in $project: run $agd init"; }
+in_git() { git -C "$project" rev-parse --is-inside-work-tree >/dev/null 2>&1 </dev/null; }
+advise() { if in_git; then echo "$1"; fi; } # <text>: advice that only makes sense under git
+home_allows() { # <path>: what a kit may install in the home folder. Elsewhere, a file can load or run in every project,
+  # or at every login. Ignores case, since a Mac's disk does: .claude/SETTINGS.JSON would act as settings.json.
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    .claude/settings*) return 1 ;;
+    .claude/*) return 0 ;;
+  esac
+  return 1
+}
 sources() { awk '$1 == "source" { print $2, $3, $4 }' "$project/$lock_file"; }
 source_line() { awk -v s="$1" '$1 == "source" && $2 == s { print $3, $4 }' "$project/$lock_file"; }
 
@@ -580,6 +608,7 @@ parse_spec() { # <spec>: sets spec_name, spec_url and spec_ref
 copied_version() { sed -n '1s/.*agentic-defaults \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$project/AGENTS.md" 2>/dev/null; }
 
 cmd_adopt() {
+  [ "$at_home" = 0 ] || die "agd adopt manages a copy of agentic-defaults in a project, not your home folder"
   [ ! -f "$project/$lock_file" ] || die "$project is already set up with agd: see agd status"
   local name url ref cache v wanted pack mode sha path dst locked=0 differ=0 missing=0
   parse_spec "$arg"
@@ -623,7 +652,7 @@ cmd_adopt() {
     1) echo "1 file differs from $(label "$v"): agd status shows whether it counts as an edit." ;;
     *) echo "$differ files differ from $(label "$v"): agd status shows which count as edits." ;;
   esac
-  echo "Commit $lock_file, then run agd status."
+  advise "Commit $lock_file, then run agd status."
 }
 
 pack_menu() { # prints one line per pack of the new release: its name, file count, the packs it needs, its agents and skills
@@ -670,20 +699,69 @@ pick_packs() { # <source and version>: writes the packs to install to $tmp/picke
   done
 }
 
+ignore_patterns() { # reads paths: the fewest paths and folder patterns for an ignore file, root files first
+  awk -F/ 'NF == 1 { print 0, $0; next }
+    $1 == ".claude" && NF == 2 { print 1, $0; next }
+    $1 == ".claude" { print 1, ".claude/" $2 "/*"; next }
+    { print 1, $1 "/*" }' | LC_ALL=C sort -u | sed 's/^[01] //'
+}
+
+# Stops before a kit puts anything in the home folder that home_allows refuses, and prints the ignore lines that
+# let the rest in. Files in the lock stay managed, so old installs keep updating.
+stop_outside_home_kit() { # <source> <file of "<pack> <mode> <blob> <path>"> <file of packs>
+  [ "$at_home" = 1 ] || return 0
+  local pack mode sha path how="agd --home init" or alone
+  awk '$1 == "file" { print $3 }' "$project/$lock_file" >"$tmp/h.locked" 2>/dev/null
+  while read -r pack mode sha path; do
+    grep -qx -- "$pack" "$3" || continue
+    grep -qxF -- "$path" "$tmp/h.locked" && continue
+    is_ignored "$path" "$1" || echo "$path"
+  done <"$2" >"$tmp/h.paths"
+  while read -r path; do home_allows "$path" || echo "$path"; done <"$tmp/h.paths" >"$tmp/h.refused"
+  [ -s "$tmp/h.refused" ] || return 0
+  # A set-up home folder needs the default source named, and has nothing to suggest once it has that source.
+  if [ -f "$project/$lock_file" ]; then
+    how="agd --home init $default_url"
+    [ -z "$(source_line "$default_name")" ] || how=""
+  fi
+  if grep -q '^\.claude/skills/' "$tmp/h.paths"; then
+    or="Or take only this kit's skills" alone="Take only this kit's skills"
+    grep -v '^\.claude/skills/' "$tmp/h.paths" >"$tmp/h.leave"
+  else
+    or="Or leave those files out" alone="Leave those files out"
+    cp "$tmp/h.refused" "$tmp/h.leave"
+  fi
+  {
+    echo "agd: $1 isn't a home kit, so agd won't install it in your home folder."
+    echo "There, agd installs only under .claude/, and never .claude/settings.json, because other files could load or run in every project."
+    echo "This kit has $(ignore_patterns <"$tmp/h.refused" | awk '{ s = s (NR > 1 ? ", " : "") $0 } END { print s }')."
+    if [ -n "$how" ]; then
+      echo
+      echo "Use a kit made for home:"
+      echo "  $how"
+      alone=$or
+    fi
+    echo
+    echo "$alone: add these lines to ~/$ignore_file, then run this again:"
+    ignore_patterns <"$tmp/h.leave" | awk -v s="$1" '{ print "  " s ":" $0 }'
+  } >&2
+  exit 2
+}
+
 cmd_init() {
   local copied name url ref cache v all wanted pack mode sha path dst owner owner_sha owner_url extra needs
   parse_spec "$arg"
   name=$spec_name url=$spec_url ref=$spec_ref
   if [ -f "$project/$lock_file" ]; then
     # A set-up project: init <source> adds another source.
-    [ -n "$arg" ] || die "$project is already set up with agd: see agd status (agd init <source> adds another source)"
+    [ -n "$arg" ] || die "$project is already set up with agd: see $agd status ($agd init <source> adds another source)"
     if sources | awk -v n="$name" '$1 == n { found = 1 } END { exit !found }'; then
-      die "this project already has a source named $name: see agd source list"
+      die "this project already has a source named $name: see $agd source list"
     fi
     lock_parts
   else
     copied=$(copied_version)
-    [ -z "$copied" ] || die "this project has a copy of agentic-defaults $copied: run agd adopt to manage it with agd"
+    [ -z "$copied" ] || [ "$at_home" = 1 ] || die "this project has a copy of agentic-defaults $copied: run agd adopt to manage it with agd"
     : >"$tmp/lock.sources"
     : >"$tmp/lock.packs"
     : >"$tmp/lock.files"
@@ -722,6 +800,8 @@ cmd_init() {
     wanted=$all
   fi
   check_needs "$tmp/new.packs" $wanted
+  printf '%s\n' "$wanted" >"$tmp/wanted"
+  stop_outside_home_kit "$name" "$tmp/new.files" "$tmp/wanted"
 
   # Decide every path before writing anything. A path another source installed is a conflict, unless
   # the ignore file drops it for one of the two. Replacing a file with project changes, or one the ignore
@@ -753,7 +833,7 @@ cmd_init() {
         echo "replace  $path (once $giver's; $ignore_file gives it to $name)" >>"$tmp/asks"
         echo "replace $mode $sha $path $giver" >>"$tmp/plan"
       else
-        echo "taken    $path (a project file has this path; not installed)"
+        echo "taken    $path ($taken_file has this path; not installed)"
         taken=$((taken + 1))
       fi
     else
@@ -764,7 +844,7 @@ cmd_init() {
     {
       echo "agd: $name ships paths that another source already installed here:"
       cat "$tmp/conflicts"
-      echo "Choose one source for each path with a line in $ignore_file, then run agd init again."
+      echo "Choose one source for each path with a line in $ignore_file, then run $agd init again."
     } >&2
     exit 2
   fi
@@ -800,10 +880,10 @@ cmd_init() {
   write_lock
 
   echo "Installed $name $(label "$v"): $(count "$added" file) from the packs $(echo $wanted)."
-  [ "$taken" = 0 ] || echo "$taken taken: project files already use those paths, so agd left them alone."
+  [ "$taken" = 0 ] || echo "$taken taken: $taken_files already use those paths, so agd left them alone."
   [ "$ignored" = 0 ] || echo "$ignored ignored, as $ignore_file asks."
   case "$url" in /*) echo "The source is a local path, so $lock_file works only on this machine." ;; esac
-  echo "Commit $lock_file along with the new files."
+  advise "Commit $lock_file along with the new files."
 }
 
 cmd_source() {
@@ -817,7 +897,7 @@ cmd_source() {
   fi
   name=$arg2
   set -- $(source_line "$name")
-  [ $# = 2 ] || die "no source named $name here: see agd source list"
+  [ $# = 2 ] || die "no source named $name here: see $agd source list"
   url=$1 v=$2
   # Refuse while another source's installed packs require one of this source's packs.
   sources >"$tmp/sources"
@@ -859,11 +939,24 @@ cmd_source() {
   mv "$tmp/lock.sources.kept" "$tmp/lock.sources"
   if [ -s "$tmp/lock.sources" ]; then
     write_lock
-    echo "Removed the source $name: $(count "$removed" file) deleted. Commit $lock_file along with the changes."
+    echo "Removed the source $name: $(count "$removed" file) deleted.$(advise " Commit $lock_file along with the changes.")"
   else
     rm -f "$project/$lock_file"
     echo "Removed the source $name: $(count "$removed" file) deleted. It was the last one, so $lock_file is gone too."
   fi
+}
+
+outside_note() { # <path> <source>
+  echo "skipped  $1 (in your home folder, agd installs only under .claude/, and never .claude/settings.json: add $2:$1 to ~/$ignore_file to stop this notice)"
+}
+
+home_copies() { # one line per skill or agent installed here that differs from the same path in the home folder
+  [ "$at_home" = 0 ] && [ -n "${HOME:-}" ] || return 0
+  awk '$1 == "file" { print $3 }' "$project/$lock_file" | grep -E '^\.claude/(skills|agents)/' | while read -r path; do
+    [ -f "$HOME/$path" ] && [ -f "$project/$path" ] || continue
+    cmp -s "$HOME/$path" "$project/$path" \
+      || echo "home     $path: your home folder has a different copy, and your tools may use that one"
+  done
 }
 
 cmd_status() {
@@ -876,13 +969,13 @@ cmd_status() {
     check_tag "$name" "$url" "$cache" "$v"
     now=$(latest "$cache")
     if is_commit "$v" && [ -n "$now" ]; then
-      echo "$name is installed at $(label "$v"), and its latest release is $now: agd update moves to it."
+      echo "$name is installed at $(label "$v"), and its latest release is $now: $agd update moves to it."
       due=1
     elif is_commit "$v"; then
       echo "$name is installed at $(label "$v"), and it has no releases."
       now=$v
     elif [ -n "$now" ] && newer "$now" "$v"; then
-      echo "$name $v is installed, and $now is available: run agd update."
+      echo "$name $v is installed, and $now is available: run $agd update."
       notes "$url" "$v" "$now" "$cache"
       due=1
     else
@@ -894,20 +987,23 @@ cmd_status() {
       case "$kind" in
         update) echo "update   $path"; due=1 ;;
         new) echo "new      $path"; due=1 ;;
-        remove) echo "removed  $path (no longer in the kit: agd update deletes it)"; due=1 ;;
-        orphan) echo "removed  $path (no longer in the kit, but it has your changes: agd update keeps it as yours)"; due=1 ;;
-        ignored) echo "ignored  $path (listed in $ignore_file: agd update stops managing it and keeps the file)"; due=1 ;;
+        remove) echo "removed  $path (no longer in the kit: $agd update deletes it)"; due=1 ;;
+        orphan) echo "removed  $path (no longer in the kit, but it has your changes: $agd update keeps it as yours)"; due=1 ;;
+        ignored) echo "ignored  $path (listed in $ignore_file: $agd update stops managing it and keeps the file)"; due=1 ;;
         edited) echo "edited   $path"; notice=1 ;;
-        edited-newer) echo "edited   $path, newer version available: see agd diff $path, then agd merge or agd reset it"; due=1 ;;
+        edited-newer) echo "edited   $path, newer version available: see $agd diff $path, then $agd merge or $agd reset it"; due=1 ;;
         deleted) echo "deleted  $path (add it to $ignore_file to stop this notice)"; notice=1 ;;
-        taken) echo "taken    $path (a project file has this path, so the kit's isn't installed)" ;;
+        taken) echo "taken    $path ($taken_file has this path, so the kit's isn't installed)" ;;
+        outside) outside_note "$path" "$name"; notice=1 ;;
         gonepack) echo "pack     $path is gone from $name $(label "$now")" ;;
-        newpack) echo "pack     $path is new in $name $(label "$now"): agd add $path installs it" ;;
+        newpack) echo "pack     $path is new in $name $(label "$now"): $agd add $path installs it" ;;
         model) model_note "$path" "$a" "$b" "$c" ;;
         tools) echo "tools    $path: ${a:-a list}${b:+ $b}${c:+ $c}" ;;
       esac
     done <"$tmp/actions"
   done <"$tmp/sources"
+  home_copies >"$tmp/home.copies"
+  if [ -s "$tmp/home.copies" ]; then cat "$tmp/home.copies"; notice=1; fi
   [ "$due" = 1 ] || [ "$notice" = 1 ] || echo "Nothing to do."
   [ "$check" = 0 ] || [ "$due" = 0 ] || exit 1
 }
@@ -920,7 +1016,7 @@ cmd_update() {
     "") ;;
     *@*)
       only=${to%@*} to=${to##*@}
-      [ -n "$(source_line "$only")" ] || die "no source named $only here: see agd source list" ;;
+      [ -n "$(source_line "$only")" ] || die "no source named $only here: see $agd source list" ;;
     *)
       [ "$(grep -c . "$tmp/sources")" -le 1 ] \
         || die "this project has several sources: name the one to move, for example --to $(tail -1 "$tmp/sources" | cut -d' ' -f1)@$to" ;;
@@ -957,7 +1053,7 @@ cmd_update() {
           echo "deleted  $path (add it to $ignore_file to stop this notice)" ;;
         edited-newer)
           echo "file $name $path $a" >>"$tmp/lock.files"
-          echo "edited   $path: left alone, and a newer version is available (see agd diff $path, then agd merge or agd reset it)" ;;
+          echo "edited   $path: left alone, and a newer version is available (see $agd diff $path, then $agd merge or $agd reset it)" ;;
         update)
           git -C "$cache" cat-file blob "$a" >"$tmp/u.installed" </dev/null
           git -C "$cache" cat-file blob "$b" >"$tmp/u.new" </dev/null
@@ -975,9 +1071,10 @@ cmd_update() {
           echo "removed  $path"; removed=$((removed + 1)) ;;
         orphan) echo "kept     $path (no longer in the kit, but it has your changes, so it is yours now)" ;;
         ignored) echo "ignored  $path (listed in $ignore_file: agd no longer manages it, and the file stays)" ;;
-        taken) echo "taken    $path (a project file has this path, so the kit's isn't installed)" ;;
+        taken) echo "taken    $path ($taken_file has this path, so the kit's isn't installed)" ;;
+        outside) outside_note "$path" "$name" ;;
         gonepack) echo "pack     $path is gone from $name $(label "$target")" ;;
-        newpack) echo "pack     $path is new in $name $(label "$target"): agd add $path installs it" ;;
+        newpack) echo "pack     $path is new in $name $(label "$target"): $agd add $path installs it" ;;
         model) [ "$b" = "$c" ] || model_note "$path" "$a" "$b" "$c" ;;
       esac
     done <"$tmp/actions"
@@ -986,7 +1083,7 @@ cmd_update() {
     echo "$name is at $(label "$target"): $updated updated, $added added, $removed removed."
   done <"$tmp/sources"
   write_lock
-  echo "Review the changes with git diff, and commit $lock_file with them."
+  advise "Review the changes with git diff, and commit $lock_file with them."
 }
 
 # Finds the source here whose installed release has <[source:]pack>, and loads that release as $tmp/pk.*.
@@ -1004,7 +1101,7 @@ find_pack() { # <[source:]pack>
     load "$cache" "$v" "pk.$name"
     all="$all $(awk '$1 == "pack" { printf " %s", $2 }' "$tmp/pk.$name.packs")"
     awk -v p="$want" '$1 == "pack" && $2 == p { found = 1 } END { exit !found }' "$tmp/pk.$name.packs" || continue
-    [ -z "$pack_source" ] || die "both $pack_source and $name have a pack $want: name one, for example agd $command $name:$want"
+    [ -z "$pack_source" ] || die "both $pack_source and $name have a pack $want: name one, for example $agd $command $name:$want"
     pack_source=$name pack_url=$url pack_ref=$v pack_cache=$cache
   done <"$tmp/pk.sources"
   [ -n "$pack_source" ] || die "no source here has a pack $want. Packs:$all"
@@ -1038,6 +1135,7 @@ cmd_add() {
     return 0
   fi
   with_requirements "$tmp/pk.packs" "$pack_name" $(cat "$tmp/have") | LC_ALL=C comm -23 - "$tmp/have" >"$tmp/adding"
+  stop_outside_home_kit "$pack_source" "$tmp/pk.files" "$tmp/adding"
   awk -v s="$pack_source" '$1 == "file" && $2 == s { print $3 }' "$project/$lock_file" >"$tmp/have.files"
   lock_parts
   while read -r pack mode sha path; do
@@ -1046,7 +1144,7 @@ cmd_add() {
     is_ignored "$path" "$pack_source" && continue
     dst=$project/$path
     if [ -e "$dst" ]; then
-      echo "taken    $path (a project file has this path, so the kit's isn't installed)"
+      echo "taken    $path ($taken_file has this path, so the kit's isn't installed)"
       continue
     fi
     mkdir -p "$(dirname "$dst")" && git -C "$pack_cache" cat-file blob "$sha" >"$dst" </dev/null || die "can't write $path"
@@ -1058,7 +1156,7 @@ cmd_add() {
   sed "s/^/pack $pack_source /" "$tmp/adding" >>"$tmp/lock.packs"
   write_lock
   echo "Added the packs $(echo $(cat "$tmp/adding")) from $pack_source $(label "$pack_ref"): $(count "$added" file)."
-  echo "Commit $lock_file along with the new files."
+  advise "Commit $lock_file along with the new files."
 }
 
 cmd_remove() {
@@ -1096,7 +1194,7 @@ cmd_remove() {
   mv "$tmp/lock.packs.kept" "$tmp/lock.packs"
   write_lock
   echo "Removed the pack $pack_source:$pack_name: $(count "$removed" file) deleted."
-  echo "Commit $lock_file along with the changes."
+  advise "Commit $lock_file along with the changes."
 }
 
 cmd_diff() {
@@ -1148,13 +1246,13 @@ cmd_merge() {
   name=$1 sha=$2
   set -- $(source_line "$name")
   url=$1 v=$2
-  [ -e "$dst" ] || die "$path is deleted here: agd reset $path brings it back"
+  [ -e "$dst" ] || die "$path is deleted here: $agd reset $path brings it back"
   cache=$(cache_of "$url")
   refresh "$url" "$cache"
   check_tag "$name" "$url" "$cache" "$v"
   now=$(newest "$cache" "$v")
   new=$(git -C "$cache" rev-parse -q --verify "$(treeish "$now"):$(root_of "$cache" "$now")$path" </dev/null) \
-    || die "$name $(label "$now") no longer has $path: agd update decides what happens to it"
+    || die "$name $(label "$now") no longer has $path: $agd update decides what happens to it"
   if [ "$new" = "$sha" ]; then
     echo "Nothing to merge: the kit hasn't changed $path since it was installed."
     return 0
@@ -1174,9 +1272,9 @@ cmd_merge() {
   compose "$path" "$tmp/m.merged" "$dst" "$tmp/m.installed" >"$tmp/m.out" && cat "$tmp/m.out" >"$dst" || die "can't write $path"
   set_lock_sha "$name" "$path" "$new"
   if [ "$conflicts" = 0 ]; then
-    echo "merged   $path: your changes and the kit's up to $name $(label "$now"), without conflicts. Review it with git diff."
+    echo "merged   $path: your changes and the kit's up to $name $(label "$now"), without conflicts.$(advise " Review it with git diff.")"
   else
-    echo "merged   $path with $(count "$conflicts" conflict): resolve the <<<<<<< markers, then review it with git diff."
+    echo "merged   $path with $(count "$conflicts" conflict): resolve the <<<<<<< markers$(advise ", then review it with git diff")."
     exit 1
   fi
 }
@@ -1236,7 +1334,7 @@ cmd_reset() {
     [ "$mode" != 100755 ] || chmod +x "$dst"
     set_lock_sha "$name" "$path" "$new"
   done <"$tmp/resets"
-  echo "Reset $(count "$n" file). Review the changes with git diff, and commit $lock_file with them."
+  echo "Reset $(count "$n" file).$(advise " Review the changes with git diff, and commit $lock_file with them.")"
 }
 
 # agd check reads a source's working tree, with the parsing load() uses, and writes nothing.
@@ -1305,6 +1403,15 @@ cmd_check() {
         if (!(p in has)) printf "warning  packs.txt:%s: pack %s has no files\n", at[p], p }
       for (p in known) if (visit(p, "")) { sub(/^ /, "", cycle); gsub(/ /, " requires ", cycle); print "error    packs.txt: a requires cycle: " cycle; exit } }' \
     "$tmp/c.packs" | LC_ALL=C sort -t: -k2,2n >>"$tmp/problems"
+  # The project's parts in a kit file. An AGENTS.md may end with a section for the project to fill in.
+  awk '{ print $4 }' "$tmp/c.files" | LC_ALL=C sort -u | while IFS= read -r path; do
+    case "$path" in *.md) ;; *) continue ;; esac
+    [ -z "$(part tools "$path" "$top/$root$path" 2>/dev/null)" ] \
+      || echo "warning  $path: tools: is the project's to set, so leave it out"
+    case "$path" in AGENTS.md|*/AGENTS.md) continue ;; esac
+    [ -z "$(part section "$path" "$top/$root$path" 2>/dev/null)" ] \
+      || echo "warning  $path: ## This project is the project's, so updates won't change what is under it"
+  done >>"$tmp/problems"
   # Releases and min-agd.
   [ -n "$(releases "$top")" ] \
     || echo "error    no release tag yet: tag one as v<major.minor.patch>, for example git tag v0.1.0" >>"$tmp/problems"
@@ -1390,7 +1497,7 @@ cmd_uninstall() {
   done <"$tmp/listed"
   rm -f "$project/$lock_file"
   echo "Uninstalled agd: $(count "$(grep -c . "$tmp/deleting")" file) deleted, $kept kept as yours, and $lock_file removed."
-  echo "Review the change with git status, and commit it."
+  advise "Review the change with git status, and commit it."
 }
 
 github_repo() { # <url>: prints owner/repo for a GitHub URL, or fails
@@ -1687,6 +1794,7 @@ cmd_complete() { # <word>... <word at the cursor>
     else
       case "$1" in
         -C|--with|--to) want=$1 ;;
+        --home) dir=${HOME:-$dir} ;;
         --offline) offline=1 ;;
         -*) ;;
         *) if [ -z "$cmd" ]; then cmd=$1; else n=$((n + 1)); [ "$n" != 1 ] || first=$1; fi ;;
@@ -1715,12 +1823,12 @@ cmd_complete() { # <word>... <word at the cursor>
   case "$cur" in
     -*)
       case "$cmd" in
-        "") echo -C --offline --version --help ;;
-        init) echo -C --offline --with --yes ;;
-        status) echo --offline --check ;;
-        update) echo -C --offline --to ;;
-        reset|uninstall) echo -C --offline --yes ;;
-        *) echo -C --offline ;;
+        "") echo -C --home --offline --version --help ;;
+        init) echo -C --home --offline --with --yes ;;
+        status) echo --home --offline --check ;;
+        update) echo -C --home --offline --to ;;
+        reset|uninstall) echo -C --home --offline --yes ;;
+        *) echo -C --home --offline ;;
       esac | tr ' ' '\n'
       return ;;
   esac

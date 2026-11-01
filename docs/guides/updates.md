@@ -20,7 +20,9 @@ Each line starts with what happens to the file:
 | `edited` | You changed the file. With "newer version available", the source changed it too: [settle it](your-changes.md#settle-an-edited-file). |
 | `deleted` | You deleted an installed file. It stays deleted. List it in `.agd-ignore` to stop the notice. |
 | `ignored` | `.agd-ignore` lists an installed file. The update stops managing it, and the file stays. |
-| `taken` | A project file has a path the source ships, so the source's file isn't installed. |
+| `taken` | A project file has a path the source ships, so the source's file isn't installed. In your home folder, it says "your file". |
+| `skipped` | In your home folder only: a release adds a file outside `.claude/`, or a `.claude/settings.json`, and [agd leaves it out](home.md#whats-different-in-your-home-folder). Add `<source>:<path>` to `~/.agd-ignore` to stop the notice. |
+| `home` | A skill or agent here differs from [the copy in your home folder](home.md#next-to-a-projects-own-kit), which your tools may use instead. Only a notice. |
 | `model`, `tools` | Your agent's own `model:` or `tools:` line, which the update keeps. |
 | `pack` | A pack that is new in the release, or gone from it. |
 | `notes` | The release notes of a release since yours. |

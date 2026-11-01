@@ -17,7 +17,7 @@ Mostly. Cursor reads the folders agentic-defaults installs, but not every line i
 
 ## Does agd run code from a source?
 
-No. agd only copies files, and never runs anything it installs. Scripts and hooks a source ships run only when an agent or a person runs them, as with any file in your repository, so review a source's releases as you would review a dependency. If a source moves a release's tag after you installed it, agd stops and shows the change before using it: see [When a release changes](guides/updates.md#when-a-release-changes-after-you-installed-it).
+No. agd only copies files, and never runs anything it installs. Scripts and hooks a source ships run only when an agent or a person runs them, as with any file in your repository, so review a source's releases as you would review a dependency. If a source moves a release's tag after you installed it, agd stops and shows the change before using it: see [When a release changes](guides/updates.md#when-a-release-changes-after-you-installed-it). In your home folder, where a file could run without anyone asking, agd [installs only under `.claude/`](guides/home.md#when-agd-stops).
 
 ## Why not copy the files, or use a git submodule?
 
@@ -47,7 +47,11 @@ Yes, since it fetches with git: `url.<mirror>.insteadOf` and git's proxy setting
 
 ## Do I have to use agentic-defaults?
 
-No. `agd init your-org/your-setup` installs any source, without agentic-defaults. To make another source the default for `agd init` and `agd adopt`, set `AGD_SOURCE` to its URL.
+No. `agd init your-org/your-setup` installs any source, without agentic-defaults. To make another source the default for `agd init` and `agd adopt`, set `AGD_SOURCE` to its URL. In your home folder, that variable is `AGD_HOME_SOURCE`.
+
+## Can I install a kit for every project on my machine?
+
+Yes. `agd --home init` installs a kit in your home folder, and agd has a few special rules there. See [Install for every project](guides/home.md).
 
 ## How do I stop using agd?
 

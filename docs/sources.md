@@ -1,10 +1,10 @@
-# Publish your own agentic setup
+# Kit sources
 
-Any git repository can be an agd source: your team's agents, skills and instructions, published so projects install and update them with agd, alone or on top of another source such as [agentic-defaults](https://github.com/Zejnilovic/agentic-defaults). This page is for the people who maintain a source.
+A kit is what agd installs in a project: your team's agents, skills and instructions. A kit source, or source for short, is the git repository that holds a kit, so projects can install and update it with agd, alone or on top of another source such as [agentic-defaults](https://github.com/Zejnilovic/agentic-defaults). This page is the reference for the people who maintain a source. To start one, see [Create a kit](guides/create-a-kit.md).
 
 ## The layout
 
-A source is a git repository with release tags, `v1.0.0` and so on. The files it installs mirror a project's root, in one of two places:
+A source is a git repository with release tags, `v1.0.0` and so on. The files of its kit mirror a project's root, in one of two places:
 
 - **In `kit/`** (the default). `kit/AGENTS.md` lands as `AGENTS.md` in a project, and `kit/.claude/agents/reviewer.md` as `.claude/agents/reviewer.md`. Everything else in the repository, such as its README, tests and scripts, stays out.
 - **At the repository's root**, with `root .` in `packs.txt`. Use it when the repository already keeps its setup at its root, for example because it uses it itself. Only files listed in a pack are installed, so the README and the code stay out.
@@ -69,9 +69,13 @@ A project can install your source next to others with `agd init your-org/your-se
 - **Pack names** can repeat across sources. Projects then name one as `<source>:<pack>`.
 - **A path another source also ships** stops agd until the project chooses with a line in `.agd-ignore`: `<other-source>:<path>` to take yours, or `<your-source>:<path>` to keep theirs. When the project changed their copy, agd lists it and asks before replacing it with yours.
 
+## For the home folder
+
+A kit whose files are all under `.claude/`, without a `.claude/settings.json`, can also go in a person's home folder, with `agd --home init`, and reach every project on their machine. agd stops on a kit with anything else. [Create a kit](guides/create-a-kit.md#a-kit-for-the-home-folder) has the rest.
+
 ## Try it before you release
 
-First check the source. In its folder, `agd check` reads the working tree, so it runs before you commit or tag. It checks `packs.txt` as an install reads it: every path exists, a folder ends in `/`, no file is in two packs, each `requires` names a pack of this source or `<source>:<pack>`, no packs require each other in a cycle, no path has spaces or quotes, there is a `v<major.minor.patch>` tag, and `min-agd` isn't newer than your agd. It prints one line per problem and exits with 1 on an error; warnings, such as a line it doesn't know, don't fail it. It writes nothing and fetches nothing, so it fits in your CI:
+First check the source. In its folder, `agd check` reads the working tree, so it runs before you commit or tag. It checks `packs.txt` as an install reads it: every path exists, a folder ends in `/`, no file is in two packs, each `requires` names a pack of this source or `<source>:<pack>`, no packs require each other in a cycle, no path has spaces or quotes, there is a `v<major.minor.patch>` tag, and `min-agd` isn't newer than your agd. It also warns about a `tools:` entry in a kit file, and a `## This project` section in a file other than an `AGENTS.md`. It prints one line per problem and exits with 1 on an error; warnings, such as a line it doesn't know, don't fail it. It writes nothing and fetches nothing, so it fits in your CI:
 
 ```text
 $ agd check

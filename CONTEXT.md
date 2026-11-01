@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A CLI that installs agentic setups (instructions, agents, skills, hooks) from git repositories, called sources, into projects, and keeps them up to date without overwriting the project's own edits. agentic-defaults is the default source. Users are developers running it on their own projects.
+A CLI that installs agentic setups (instructions, agents, skills, hooks) from git repositories, called sources, into projects, and keeps them up to date without overwriting the project's own edits. agentic-defaults is the default source; in a home folder it is agentic-home. Users are developers running it on their own projects.
 
 Not responsible for: the kit content itself (it lives in each source, for example github.com/Zejnilovic/agentic-defaults), and running anything from a source: agd only copies files.
 
@@ -18,7 +18,7 @@ Not responsible for: the kit content itself (it lives in each source, for exampl
 - `bin/agd`: the whole tool. Usage comment at the top is also `agd --help` (printed by `usage()`).
 - `install.sh`: installs or updates `bin/agd` from a GitHub release into a folder on `PATH`.
 - `tests/test_agd.py`: all tests: version and release scripts, `install.sh`, then one class per agd command area (`AgdInitTest`, `AgdUpdateTest`, ...), built on `AgdCase`.
-- `scripts/`: `bump.sh` (start a version), `release.sh` (date the changelog entry, write notes), `formula.sh` (print the Homebrew formula). Run by the maintainer and the Release workflow.
+- `scripts/`: `bump.sh` (start a version), `release.sh` (date the changelog entry, write notes), `formula.sh` (print the Homebrew formula), `close_issues.py` (close and comment on the issues a release's notes name, in Python because it reads `gh`'s JSON; the same script as in agentic-defaults and agentic-home, apart from its `HOW_TO_GET_IT` line). Run by the maintainer and the Release workflow.
 - `docs/`, `mkdocs.yml`: the site for people. `docs/reference/commands.md` and `docs/reference/files.md` describe commands and files. A page includes a repository file with `--8<-- "<path from the root>"` (`pymdownx.snippets`; a missing path fails the build).
 - `.github/workflows/`: `check.yml` (syntax and tests on Linux and macOS), `docs.yml` (site), `release.yml` (release; attests `agd`, the archive and `SHA256SUMS` with `actions/attest`, which needs `id-token: write` and `attestations: write` on the release job only, and runs `gh attestation verify` on the downloaded `agd` on every OS), `agd-update.yml` (weekly `agd update` of this repository's setup with a pinned agd release, as a pull request; `docs/guides/automatic-updates.md` includes it, so keep it copyable by any project).
 - `.claude/`, `.local_context/`, `AGENTS.md`, `CLAUDE.md`, `.agd.lock`: this repository's own agentic setup, installed by agd from agentic-defaults.
@@ -37,10 +37,12 @@ flowchart LR
 
 ## Domain
 
-- Source: a git repository with `kit/` (or the `root` named in `packs.txt`), `packs.txt` and release tags. Several sources can be installed in one project; a pack names another source's pack as `<source>:<pack>`.
+- Kit: what agd installs in a project: instructions, agents, skills, hooks.
+- Source (kit source): a git repository holding a kit, with `kit/` (or the `root` named in `packs.txt`), `packs.txt` and release tags. Several sources can be installed in one project; a pack names another source's pack as `<source>:<pack>`.
 - Pack: a named set of kit paths in `packs.txt`, with `requires` on other packs. `min-agd` names the oldest agd that can install the source.
 - Project parts: what updates keep in a kit file: an agent's `model:` and `tools:` front-matter lines, and a closing `## This project` section of a Markdown file (`part()` and `compose()` in `bin/agd`).
 - Taken: a project file already at a kit path; `init` leaves it and doesn't install that file.
+- Home rules: what changes when the target folder is `$HOME` (`at_home`). Other default source, installs only under `.claude/` and never `.claude/settings.json` (`home_allows`), and no `adopt`. A home kit is any kit that fits, once `.agd-ignore` applies; `packs.txt` has no marker for it. `docs/guides/home.md` has the reasons.
 
 ## Contracts
 
@@ -60,10 +62,14 @@ Commands are in AGENTS.md "This project". The tests need only git, bash and Pyth
 - State in `bin/agd` lives in temporary files under `$tmp` (removed on exit) and line-based lists read with `awk`, never arrays.
 - Each `cmd_<name>()` function implements one command; the dispatch `case` is at the end of the script.
 - Errors go through `die()`, which exits 2.
+- Messages that name a command to run use `$agd`, which is `agd --home` in the home folder.
 - Tests run the script as a subprocess against temporary source repositories and projects, with `GIT_CONFIG_GLOBAL=/dev/null`; GitHub URLs are faked with `url.<path>.insteadOf`.
 
 ## Invariants and gotchas
 
+- `at_home` compares `$HOME` and the target folder with `pwd -P`, so `--home`, `-C ~` and `cd ~` all count; `--home` only sets `dir`. `init` and `add` call `stop_outside_home_kit` before writing. `update` writes source by source, so it can't stop cleanly: `examine` emits `outside` instead, and `status` and `update` print `skipped`. `home_allows` ignores case, since a case-insensitive disk would treat `.claude/SETTINGS.JSON` as `settings.json`. Paths already in the lock pass both, so installs from before these rules keep updating. Tests get a temporary `HOME` from `AgdCase.setUp`, since `status` reads the home folder (`home_copies`).
+- `advise` prints git advice only inside a git work tree. Tests' projects aren't git repositories unless a test makes them one.
+- The `kit-authoring` skill lives in Zejnilovic/agentic-home, not here, so an agd release is not a skill release.
 - `.gitattributes` export-ignores the agentic setup, so the release archive (`git archive` in `release.yml`) holds agd only. `ReleaseTest.test_archive_leaves_out_the_agentic_setup` checks it.
 - `VERSION` and `version=` in `bin/agd` must match (`VersionTest`).
 - `agd feedback` never posts: it runs `gh issue create --web` or prints a link, because notes may hold private code. It finds the owner by matching lock paths in the note's text (`cmd_feedback`); without a note, `ask_feedback` turns terminal answers into one in `$tmp`, picking files with fzf when `command -v fzf` finds it. Its tests write `.agd.lock` themselves.

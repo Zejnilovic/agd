@@ -72,10 +72,12 @@ nav:
       - Update automatically: guides/automatic-updates.md
       - Make files your own: guides/your-changes.md
       - Combine sources: guides/combine-sources.md
+      - Install for every project: guides/home.md
       - Adopt a copy: guides/adopt.md
       - Mirrors, proxies and offline: guides/company-networks.md
-      - Publish your own setup: sources.md
+      - Create a kit: guides/create-a-kit.md
   - Reference:
+      - Kit sources: sources.md
       - Commands: reference/commands.md
       - Files: reference/files.md
       - FAQ: faq.md

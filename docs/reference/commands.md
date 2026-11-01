@@ -1,12 +1,13 @@
 # Commands
 
 ```text
-agd [-C <dir>] [--offline] <command> [<arguments>]
+agd [-C <dir> | --home] [--offline] <command> [<arguments>]
 ```
 
 | Option | Does |
 |---|---|
 | `-C <dir>` | Works in `<dir>` instead of the current folder. |
+| `--home` | Works in your home folder, for [every project on this machine](../guides/home.md). Can't be used with `-C`. |
 | `--offline` | Uses the cached copy of each source instead of fetching it. Each source must have been fetched once. |
 | `--version` | Prints agd's version. |
 | `--help` | Lists the commands. |
@@ -19,7 +20,7 @@ agd init [<source>][@<version>|@<commit>] [--with <pack>,...] [--yes]
 
 Installs a source in the project, and writes `.agd.lock`.
 
-- **`<source>`** is a GitHub `owner/repo`, a git URL (`https://...`, `ssh://...`, `git@host:...`) or a local folder. Without it, agd installs agentic-defaults, or the URL in `AGD_SOURCE`.
+- **`<source>`** is a GitHub `owner/repo`, a git URL (`https://...`, `ssh://...`, `git@host:...`) or a local folder. Without it, agd installs agentic-defaults, or the URL in `AGD_SOURCE`. In your home folder, it installs agentic-home, or the URL in `AGD_HOME_SOURCE`, and [stops on a kit with files outside `.claude/`, or a `.claude/settings.json`](../guides/home.md#when-agd-stops).
 - **`@<version>`** installs that release, such as `@1.2.0`; **`@<commit>`** a commit, by its SHA. A commit that isn't on a branch needs its full SHA. Without either, agd installs the latest release; a source without releases needs a commit.
 - **Packs.** In a terminal, agd lists the source's packs, with their agents and skills, and asks which to install: numbers or names, or Enter for every pack. With [fzf](https://github.com/junegunn/fzf) installed, you pick them in fzf: Tab picks several, Ctrl-A all, Enter confirms, Esc installs nothing. A source with one pack isn't asked about. [Choose packs](../guides/packs.md) shows it.
 - **`--with`** installs only the named packs, and the packs they require, without asking.
@@ -33,7 +34,7 @@ In a project that is already set up, `init <source>` adds another source. It sto
 agd adopt [<source>][@<version>]
 ```
 
-Starts managing a copy of a source made by hand or by agentic-defaults' old `scripts/sync.sh`, without changing a file. Without `@<version>`, agd reads agentic-defaults' release from the first line of `AGENTS.md`. See [Adopt a copy](../guides/adopt.md).
+Starts managing a copy of a source made by hand or by agentic-defaults' old `scripts/sync.sh`, without changing a file. Without `@<version>`, agd reads agentic-defaults' release from the first line of `AGENTS.md`. See [Adopt a copy](../guides/adopt.md). It stops in your home folder, where a copy of agentic-defaults doesn't belong.
 
 ## status
 
@@ -41,7 +42,7 @@ Starts managing a copy of a source made by hand or by agentic-defaults' old `scr
 agd status [--check]
 ```
 
-Shows what `agd update` would do, file by file, and links the release notes of GitHub sources. It writes nothing in the project. With `--check`, it exits with 1 when an update is due, for CI. [The lines it prints](../guides/updates.md#check-what-would-change).
+Shows what `agd update` would do, file by file, and links the release notes of GitHub sources. It writes nothing in the project. With `--check`, it exits with 1 when an update is due, for CI. [The lines it prints](../guides/updates.md#check-what-would-change). In a project, it also [notes a skill or agent](../guides/home.md#next-to-a-projects-own-kit) that differs from the copy in your home folder, without changing the exit code.
 
 ## update
 
@@ -49,7 +50,7 @@ Shows what `agd update` would do, file by file, and links the release notes of G
 agd update [--to [<source>@]<version>|<commit>]
 ```
 
-Updates every source to its latest release, keeping the project parts of each file and leaving edited files alone. `--to` moves to the given release, newer or older, or to a commit. When the project has several sources, `--to` names the one to move, as `<source>@<version>` or `<source>@<commit>`, and leaves the others as they are.
+Updates every source to its latest release, keeping the project parts of each file and leaving edited files alone. `--to` moves to the given release, newer or older, or to a commit. When the project has several sources, `--to` names the one to move, as `<source>@<version>` or `<source>@<commit>`, and leaves the others as they are. In your home folder, it [leaves out](../guides/home.md#whats-different-in-your-home-folder) a file outside `.claude/`, or a `.claude/settings.json`, that a release adds, with a `skipped` line.
 
 If an installed release's tag has moved to another commit since it was installed, `update` stops and shows the change, as do `status`, `add`, `remove`, `diff`, `merge` and `reset`. `--to <version>`, or `--to <source>@<version>` with several sources, accepts the release as it is now. See [When a release changes after you installed it](../guides/updates.md#when-a-release-changes-after-you-installed-it).
 
@@ -116,7 +117,7 @@ Takes agd out of the project: removes every source, deletes the installed files 
 agd check [<folder>]
 ```
 
-Checks a source before you release it: its `packs.txt`, the paths in each pack, `requires`, release tags and `min-agd`, in the working tree of `<folder>` (default: the current folder), so it runs before you tag. It parses `packs.txt` as installs do, prints one line per error or warning, and exits with 1 when there is an error. A file in no pack is a warning when the root is a kit folder; with `root .`, files outside the packs stay out on purpose. It writes nothing and fetches nothing. See [Try it before you release](../sources.md#try-it-before-you-release).
+Checks a source before you release it: its `packs.txt`, the paths in each pack, `requires`, release tags and `min-agd`, in the working tree of `<folder>` (default: the current folder), so it runs before you tag. It parses `packs.txt` as installs do, prints one line per error or warning, and exits with 1 when there is an error. A file in no pack is a warning when the root is a kit folder; with `root .`, files outside the packs stay out on purpose. A `tools:` entry in a kit file, or a `## This project` section in a file other than an `AGENTS.md`, is a warning too, since those belong to the project. It writes nothing and fetches nothing. See [Try it before you release](../sources.md#try-it-before-you-release).
 
 ## feedback
 
@@ -180,6 +181,7 @@ Prints the shell's tab completion script. It completes commands and options; fro
 | Variable | Does |
 |---|---|
 | `AGD_SOURCE` | The URL of the default source, instead of agentic-defaults. |
+| `AGD_HOME_SOURCE` | The URL of the default source in your home folder, instead of agentic-home. |
 | `AGD_CACHE` | The folder for cached sources. The default is `$XDG_CACHE_HOME/agd`, or `~/.cache/agd`. |
 
 ## Exit codes

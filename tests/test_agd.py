@@ -1,5 +1,6 @@
 """Behavior tests for bin/agd. Run: python3 -m unittest discover -s tests"""
 
+import json
 import os
 import pathlib
 import re
@@ -12,6 +13,8 @@ import unittest
 REPO = pathlib.Path(__file__).resolve().parent.parent
 AGD = REPO / "bin/agd"
 INSTALL = REPO / "install.sh"
+sys.path.insert(0, str(REPO / "scripts"))
+from close_issues import marker_problems  # noqa: E402
 # macOS ships bash 3.2 as /bin/bash; agd must keep working with it.
 BASH = "/bin/bash" if sys.platform == "darwin" else "bash"
 
@@ -35,6 +38,161 @@ def write(root, rel, text="x\n"):
     path = pathlib.Path(root) / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
+
+
+FAKE_GH = """#!/usr/bin/env bash
+echo "$*" >> "$GH_DIR/log"
+case "$1 $2" in
+  "issue view") cat "$GH_DIR/$3.json" 2>/dev/null || { echo "no issue $3" >&2; exit 1; } ;;
+  "issue comment") [ -f "$GH_DIR/fail-comment-$3" ] && exit 1; cat > "$GH_DIR/comment-$3.md" ;;
+esac
+"""
+
+
+class CloseIssuesTest(unittest.TestCase):
+    """scripts/close_issues.py, against a fake gh that logs its calls."""
+
+    RELEASE_LINK = "https://github.com/example/kit/releases/tag/v1.2.0)"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self._tmp.name)
+        write(self.dir, "bin/gh", FAKE_GH)
+        (self.dir / "bin/gh").chmod(0o755)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def issue(self, number, state="OPEN", comments=(), kind="issues"):
+        write(self.dir, f"{number}.json", json.dumps({
+            "state": state, "url": f"https://github.com/example/kit/{kind}/{number}",
+            "comments": [{"body": body} for body in comments]}))
+
+    def close(self, notes, *args):
+        write(self.dir, "notes.md", notes)
+        env = {**GIT_ENV, "GH_DIR": str(self.dir), "PATH": f"{self.dir}/bin:{os.environ['PATH']}"}
+        env.pop("GITHUB_REPOSITORY", None)
+        return subprocess.run(["python3", str(REPO / "scripts/close_issues.py"), "--repo", "example/kit",
+                               "--version", "1.2.0", "--notes", str(self.dir / "notes.md"), *args],
+                              env=env, capture_output=True, text=True)
+
+    def log(self):
+        path = self.dir / "log"
+        return path.read_text().splitlines() if path.exists() else []
+
+    def writes(self):
+        return [" ".join(line.split()[:3]) for line in self.log() if not line.startswith("issue view")]
+
+    def test_closes_fixed_issues_and_comments_on_referenced_ones(self):
+        for number in (11, 12, 20):
+            self.issue(number)
+        result = self.close("- First change. (ref #20, ref #11, #12)\n- Second, see #99. (#12)\n- Third.\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.writes(), ["issue comment 11", "issue comment 12", "issue close 12", "issue comment 20"])
+        fixed = (self.dir / "comment-12.md").read_text()
+        self.assertIn(f"Fixed in [1.2.0]({self.RELEASE_LINK}", fixed)
+        self.assertIn("brew upgrade agd", fixed)
+        self.assertIn("- First change.\n", fixed)
+        self.assertIn("- Second, see #99.\n", fixed)
+        self.assertNotIn("Third", fixed)
+        self.assertNotIn("(ref #20", fixed)
+        related = (self.dir / "comment-20.md").read_text()
+        self.assertIn(f"[1.2.0]({self.RELEASE_LINK}", related)
+        self.assertIn("doesn't close this issue", related)
+        self.assertIn("- First change.\n", related)
+        self.assertNotIn("Second", related)
+
+    def test_fix_wins_when_an_issue_is_also_referenced(self):
+        self.issue(12)
+        result = self.close("- First. (ref #12)\n- Second. (#12)\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.writes(), ["issue comment 12", "issue close 12"])
+        self.assertIn("- First.\n", (self.dir / "comment-12.md").read_text())
+
+    def test_running_again_changes_nothing(self):
+        done = f"Fixed in [1.2.0]({self.RELEASE_LINK}."
+        self.issue(12, "CLOSED", [done])
+        self.issue(20, "OPEN", [done])
+        result = self.close("- First. (ref #20, #12)\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.writes(), [])
+
+    def test_comment_about_another_release_does_not_count(self):
+        self.issue(20, "OPEN", ["See [1.2.01](https://github.com/example/kit/releases/tag/v1.2.01)."])
+        self.close("- First. (ref #20)\n")
+        self.assertEqual(self.writes(), ["issue comment 20"])
+
+    def test_finishes_an_issue_that_was_commented_but_not_closed(self):
+        self.issue(12, "OPEN", [f"Fixed in [1.2.0]({self.RELEASE_LINK}."])
+        self.close("- First. (#12)\n")
+        self.assertEqual(self.writes(), ["issue close 12"])
+
+    def test_issue_closed_by_hand_still_gets_the_comment(self):
+        self.issue(12, "CLOSED")
+        self.close("- First. (#12)\n")
+        self.assertEqual(self.writes(), ["issue comment 12"])
+
+    def test_dry_run_writes_nothing_and_says_what_it_would_do(self):
+        self.issue(12)
+        self.issue(20)
+        result = self.close("- First. (ref #20, #12)\n", "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.writes(), [])
+        self.assertIn("would close #12", result.stdout)
+        self.assertIn("would comment on #20", result.stdout)
+
+    def test_bad_number_is_reported_and_the_rest_still_runs(self):
+        self.issue(13, kind="pull")
+        self.issue(20)
+        result = self.close("- First. (#12, #13, ref #20)\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("#12", result.stdout)
+        self.assertIn("#13", result.stdout)
+        self.assertEqual(self.writes(), ["issue comment 20"])
+
+    def test_failed_comment_leaves_the_issue_open(self):
+        self.issue(12)
+        write(self.dir, "fail-comment-12", "")
+        result = self.close("- First. (#12)\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.writes(), ["issue comment 12"])
+
+    def test_malformed_marker_stops_before_anything_is_written(self):
+        self.issue(12)
+        result = self.close("- First. (#12)\n- Second. (part of #20)\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("#20", result.stdout)
+        self.assertEqual(self.log(), [])
+
+    def test_marker_on_a_continuation_line_counts(self):
+        self.issue(12)
+        self.close("- First line\n  and the second. (#12)\n")
+        self.assertEqual(self.writes(), ["issue comment 12", "issue close 12"])
+        self.assertIn("- First line and the second.\n", (self.dir / "comment-12.md").read_text())
+
+    def test_no_markers_means_no_calls(self):
+        result = self.close("- First.\n- Second, see #99.\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.log(), [])
+
+
+class MarkerRuleTest(unittest.TestCase):
+    """The changelog's issue markers, which close_issues.py acts on after a release."""
+
+    def test_good_bullets_have_no_problems(self):
+        for notes in ("- A change. (#12)\n", "- A change. (ref #20, ref #11, #12)\n", "- A change, see #99.\n",
+                      "- A long change\n  on two lines. (#12)\n", "- A change.\n"):
+            self.assertEqual(marker_problems(notes), [], notes)
+
+    def test_bad_markers_and_closing_words_are_problems(self):
+        for notes in ("- A change. (part of #20)\n", "- A change. (refs #20)\n", "- A change. (#20 #21)\n",
+                      "- This closes #12 for good.\n", "- Fixes #12.\n", "- Long\n  and resolved #12 here.\n"):
+            self.assertEqual(len(marker_problems(notes)), 1, notes)
+
+    def test_the_unreleased_changelog_entry_has_no_problems(self):
+        changelog = (REPO / "CHANGELOG.md").read_text()
+        entry = re.search(r"^## \S+ \(unreleased\)\n(.*?)(?=^## |\Z)", changelog, re.M | re.S)
+        self.assertEqual(marker_problems(entry.group(1)) if entry else [], [])
 
 
 class VersionTest(unittest.TestCase):
@@ -253,10 +411,12 @@ class AgdCase(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         base = pathlib.Path(self._tmp.name)
         self.source, self.project, self.cache = base / "source", base / "project", base / "cache"
+        self.home = base / "home"
         self.source.mkdir()
         self.project.mkdir()
+        self.home.mkdir()
         run(["git", "init", "-q", "-b", "main"], self.source)
-        self.env = {**GIT_ENV, "AGD_SOURCE": str(self.source), "AGD_CACHE": str(self.cache)}
+        self.env = {**GIT_ENV, "AGD_SOURCE": str(self.source), "AGD_CACHE": str(self.cache), "HOME": str(self.home)}
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -1391,6 +1551,25 @@ class AgdCheckTest(AgdCase):
         for text in ("packs.txt:13: future-line", "react-developer.md", "empty"):
             self.assertIn(text, result.stdout)
 
+    def test_warns_about_the_project_parts_in_a_kit_file(self):
+        result = self.check(files={
+            "kit/.claude/agents/flask-developer.md": "---\nname: flask-developer\ntools: Read, Grep\n---\n\nFlask.\n",
+            "kit/.claude/skills/flask/SKILL.md": "---\nname: flask\n---\n\nFlask.\n\n## This project\n\n- Add yours.\n"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        warnings = [line for line in result.stdout.splitlines() if line.startswith("warning ")]
+        self.assertEqual(len(warnings), 2, result.stdout)
+        self.assertRegex(result.stdout, r"warning +\.claude/agents/flask-developer\.md: .*tools:")
+        self.assertRegex(result.stdout, r"warning +\.claude/skills/flask/SKILL\.md: .*## This project")
+
+    def test_check_is_quiet_about_binary_files(self):
+        (self.source / "kit/.claude/skills/flask/logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe\x00\x80tools: x\n")
+        env = {**self.env, "LC_ALL": "en_US.UTF-8"}
+        result = subprocess.run([BASH, str(AGD), "check", str(self.source)], env=env,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("awk", result.stderr)
+        self.assertNotIn("logo.png", result.stdout)
+
     def test_a_source_at_the_repository_root_doesnt_warn_about_its_other_files(self):
         result = self.check("root .\n\npack core\n  kit/AGENTS.md\n", {"README.md": "Read me.\n"})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -1905,6 +2084,321 @@ class AgdFeedbackTest(WithoutGhAndFzf, AgdCase):
         self.assertIn("Details.\n" * 1000, result.stdout)
 
 
+class AgdHomeTest(AgdCase):
+    """The home folder has rules of its own, however agd was told to work there."""
+
+    HOME_KIT = {
+        ".claude/skills/kit-authoring/SKILL.md": "---\nname: kit-authoring\ndescription: Kits.\n---\n\nKits.\n",
+        ".claude/agents/helper.md": "---\nname: helper\ndescription: Helps.\nmodel: haiku\n---\n\nHelps.\n",
+    }
+
+    def setUp(self):
+        super().setUp()
+        self.release("1.0.0")
+        self.home_kit = self.kit("agentic-home", self.HOME_KIT)
+        self.env["AGD_HOME_SOURCE"] = str(self.home_kit)
+
+    def kit(self, name, files, packs=None):
+        """A source of its own, at release 1.0.0."""
+        repo = pathlib.Path(self._tmp.name) / name
+        repo.mkdir()
+        run(["git", "init", "-q", "-b", "main"], repo)
+        self.tag(repo, "1.0.0", files, packs)
+        return repo
+
+    def tag(self, repo, version, files, packs=None):
+        for rel, text in files.items():
+            write(repo, f"kit/{rel}", text)
+        if packs:
+            write(repo, "packs.txt", packs)
+        # -f: the person running the tests may ignore .claude/settings.local.json globally.
+        run(["git", "add", "-A", "-f"], repo)
+        self.assertEqual(run(["git", "commit", "-q", "-m", version], repo).returncode, 0)
+        run(["git", "tag", f"v{version}"], repo)
+
+    def run_agd(self, *args, cwd=None, env=None):
+        return subprocess.run([BASH, str(AGD), *args], cwd=cwd or self.project, env=env or self.env,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True)
+
+    def home_files(self):
+        return sorted(str(p.relative_to(self.home)) for p in self.home.rglob("*") if p.is_file())
+
+    # --home and the default source
+
+    def test_home_works_on_the_home_folder_from_anywhere_in_any_position(self):
+        for args in (("--home", "init"), ("init", "--home")):
+            with self.subTest(args):
+                result = self.run_agd(*args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("Installed agentic-home 1.0.0", result.stdout)
+                self.assertTrue((self.home / ".claude/skills/kit-authoring/SKILL.md").exists())
+                self.assertEqual(list(self.project.iterdir()), [])
+                self.assertIn("agentic-home 1.0.0 is installed", self.run_agd("--home", "status").stdout)
+                self.assertEqual(self.run_agd("--home", "uninstall", "--yes").returncode, 0)
+
+    def test_the_home_folder_counts_however_it_is_named(self):
+        link = pathlib.Path(self._tmp.name) / "link"
+        link.symlink_to(self.home)
+        ways = {"-C": (("-C", str(self.home), "init"), None), "a link": (("-C", str(link), "init"), None),
+                "the current folder": (("init",), self.home)}
+        for name, (args, cwd) in ways.items():
+            with self.subTest(name):
+                result = self.run_agd(*args, cwd=cwd)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("Installed agentic-home", result.stdout)
+                self.assertEqual(self.run_agd("--home", "uninstall", "--yes").returncode, 0)
+
+    def test_a_project_keeps_its_default_source(self):
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Installed agentic-defaults 1.0.0", result.stdout)
+        self.assertTrue((self.project / "AGENTS.md").exists())
+        self.assertEqual(self.home_files(), [])
+
+    def test_home_with_another_folder_or_no_home_stops(self):
+        result = self.run_agd("--home", "-C", str(self.project), "init")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--home", result.stderr)
+        no_home = {key: value for key, value in self.env.items() if key != "HOME"}
+        result = self.run_agd("--home", "init", env=no_home)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("HOME", result.stderr)
+        no_cache = {key: value for key, value in no_home.items() if key not in ("AGD_CACHE", "XDG_CACHE_HOME")}
+        result = self.run_agd("--home", "init", env=no_cache)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--home needs HOME", result.stderr)
+        self.assertEqual(self.home_files(), [])
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_commands_without_a_lock_say_how_to_start_in_home(self):
+        result = self.run_agd("--home", "status")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd --home init", result.stderr)
+        self.assertIn("run agd init", self.agd("status").stderr)
+
+    def test_adopt_stops_in_home(self):
+        result = self.run_agd("--home", "adopt", "@1.0.0")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("project", result.stderr)
+        self.assertEqual(self.home_files(), [])
+
+    # A kit made for projects
+
+    def test_a_kit_for_projects_stops_explains_and_writes_nothing(self):
+        result = self.run_agd("--home", "init", str(self.source))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.home_files(), [])
+        self.assertIn("agd: source isn't a home kit", result.stderr)
+        self.assertIn("agd installs only under .claude/", result.stderr)
+        self.assertIn("This kit has AGENTS.md, CLAUDE.md.", result.stderr)
+        self.assertIn("agd --home init\n", result.stderr)
+        self.assertIn("~/.agd-ignore", result.stderr)
+        lines = [line.strip() for line in result.stderr.splitlines() if line.startswith("  source:")]
+        self.assertEqual(lines, ["source:AGENTS.md", "source:CLAUDE.md", "source:.claude/agents/*"])
+
+    def test_the_printed_lines_leave_only_the_skills_and_other_kits_alone(self):
+        stopped = self.run_agd("--home", "init", str(self.source))
+        lines = [line.strip() for line in stopped.stderr.splitlines() if line.startswith("  source:")]
+        write(self.home, ".agd-ignore", "\n".join(lines) + "\n")
+        result = self.run_agd("--home", "init", str(self.source))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        installed = [path for path in self.home_files() if path not in (".agd-ignore", ".agd.lock")]
+        self.assertTrue(installed)
+        for path in installed:
+            self.assertTrue(path.startswith(".claude/skills/"), path)
+        self.assertEqual(self.run_agd("--home", "init", str(self.home_kit)).returncode, 0)
+        self.assertTrue((self.home / ".claude/agents/helper.md").exists())
+        self.assertIn("Nothing to do.", self.run_agd("--home", "status").stdout)
+
+    def test_the_stop_only_suggests_what_works_in_a_folder_already_set_up(self):
+        other = self.kit("team", {".claude/skills/a/SKILL.md": "A.\n"})
+        self.assertEqual(self.run_agd("--home", "init", str(other)).returncode, 0)
+        stopped = self.run_agd("--home", "init", str(self.source))
+        self.assertEqual(stopped.returncode, 2)
+        self.assertIn(f"agd --home init {self.home_kit}\n", stopped.stderr)
+        self.assertIn("Or take only this kit's skills", stopped.stderr)
+        self.assertEqual(self.run_agd("--home", "init", str(self.home_kit)).returncode, 0)
+        # With the default home kit already here, there is nothing to suggest but the skills.
+        stopped = self.run_agd("--home", "init", str(self.source))
+        self.assertEqual(stopped.returncode, 2)
+        self.assertNotIn("Use a kit made for home", stopped.stderr)
+        self.assertIn("Take only this kit's skills", stopped.stderr)
+
+    def test_a_kit_without_skills_gets_no_skills_advice(self):
+        kit = self.kit("rules", {"CLAUDE.md": "Rules.\n", ".claude/agents/a.md": "A.\n"})
+        result = self.run_agd("--home", "init", str(kit))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("This kit has CLAUDE.md.", result.stderr)
+        self.assertNotIn("skills", result.stderr)
+        self.assertIn("Or leave those files out", result.stderr)
+        lines = [line.strip() for line in result.stderr.splitlines() if line.startswith("  rules:")]
+        self.assertEqual(lines, ["rules:CLAUDE.md"])
+        write(self.home, ".agd-ignore", "rules:CLAUDE.md\n")
+        self.assertEqual(self.run_agd("--home", "init", str(kit)).returncode, 0)
+        self.assertTrue((self.home / ".claude/agents/a.md").exists())
+        self.assertFalse((self.home / "CLAUDE.md").exists())
+
+    def test_a_home_kit_installs_only_under_claude(self):
+        paths = (".zshenv", ".ssh/authorized_keys", "Library/LaunchAgents/com.example.plist", ".local/bin/git",
+                 ".claude.json", ".claude/settings.json", ".claude/settings.local.json", ".claude/SETTINGS.JSON")
+        for number, path in enumerate(paths):
+            with self.subTest(path):
+                kit = self.kit(f"kit{number}", {path: "Runs.\n", ".claude/skills/a/SKILL.md": "A.\n"})
+                result = self.run_agd("--home", "init", str(kit))
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn("isn't a home kit", result.stderr)
+                self.assertEqual(self.home_files(), [])
+                lines = [line.strip() for line in result.stderr.splitlines() if line.startswith(f"  kit{number}:")]
+                write(self.home, ".agd-ignore", "\n".join(lines) + "\n")
+                result = self.run_agd("--home", "init", str(kit))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.home_files(), [".agd-ignore", ".agd.lock", ".claude/skills/a/SKILL.md"])
+                self.assertEqual(self.run_agd("--home", "uninstall", "--yes").returncode, 0)
+                (self.home / ".agd-ignore").unlink()
+
+    def test_everything_else_under_claude_installs_in_home(self):
+        files = {".claude/CLAUDE.md": "Rules.\n", ".claude/rules/a.md": "Rule.\n", ".claude/agents/a.md": "A.\n",
+                 ".claude/commands/a.md": "A.\n", ".claude/skills/a/SKILL.md": "A.\n",
+                 ".claude/skills/a/settings.json": "{}\n"}
+        kit = self.kit("wide", files)
+        result = self.run_agd("--home", "init", str(kit))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for path in files:
+            self.assertTrue((self.home / path).exists(), path)
+
+    def test_a_project_can_still_have_any_path(self):
+        kit = self.kit("anywhere", {".envrc": "Env.\n", ".claude/settings.json": "{}\n"})
+        self.assertEqual(self.agd("init", str(kit)).returncode, 0)
+        self.assertTrue((self.project / ".envrc").exists())
+        self.assertTrue((self.project / ".claude/settings.json").exists())
+
+    def test_a_release_adding_a_file_outside_claude_skips_it(self):
+        self.assertEqual(self.run_agd("--home", "init").returncode, 0)
+        self.tag(self.home_kit, "1.1.0", {".zshenv": "Runs.\n", ".claude/settings.json": "{}\n"})
+        status = self.run_agd("--home", "status").stdout
+        self.assertRegex(status, r"skipped\s+\.zshenv")
+        self.assertRegex(status, r"skipped\s+\.claude/settings\.json")
+        self.assertEqual(self.run_agd("--home", "update").returncode, 0)
+        self.assertFalse((self.home / ".zshenv").exists())
+        self.assertFalse((self.home / ".claude/settings.json").exists())
+
+    def test_a_kit_with_ignored_root_files_or_only_a_harmless_pack_installs(self):
+        packs = "pack rules\n  AGENTS.md\npack skills\n  .claude/skills/\n"
+        kit = self.kit("split", {"AGENTS.md": "Rules.\n", ".claude/skills/a/SKILL.md": "A.\n"}, packs)
+        result = self.run_agd("--home", "init", str(kit), "--with", "skills")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / "AGENTS.md").exists())
+        self.assertEqual(self.run_agd("--home", "uninstall", "--yes").returncode, 0)
+        write(self.home, ".agd-ignore", "split:AGENTS.md\n")
+        result = self.run_agd("--home", "init", str(kit))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / "AGENTS.md").exists())
+
+    def test_adding_a_pack_with_a_root_file_stops(self):
+        packs = "pack skills\n  .claude/skills/\npack rules\n  AGENTS.md\n"
+        kit = self.kit("split", {"AGENTS.md": "Rules.\n", ".claude/skills/a/SKILL.md": "A.\n"}, packs)
+        self.assertEqual(self.run_agd("--home", "init", str(kit), "--with", "skills").returncode, 0)
+        lock = (self.home / ".agd.lock").read_text()
+        result = self.run_agd("--home", "add", "rules")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd: split isn't a home kit", result.stderr)
+        self.assertFalse((self.home / "AGENTS.md").exists())
+        self.assertEqual((self.home / ".agd.lock").read_text(), lock)
+
+    def test_a_release_adding_a_root_file_skips_it_and_updates_the_rest(self):
+        self.assertEqual(self.run_agd("--home", "init").returncode, 0)
+        self.tag(self.home_kit, "1.1.0", {"CLAUDE.md": "Rules.\n", ".claude/agents/helper.md": "Helps more.\n"})
+        status = self.run_agd("--home", "status")
+        self.assertRegex(status.stdout, r"skipped\s+CLAUDE\.md")
+        result = self.run_agd("--home", "update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"skipped\s+CLAUDE\.md")
+        self.assertFalse((self.home / "CLAUDE.md").exists())
+        self.assertEqual((self.home / ".claude/agents/helper.md").read_text(), "Helps more.\n")
+        self.assertNotIn("CLAUDE.md", (self.home / ".agd.lock").read_text())
+        self.assertEqual(self.run_agd("--home", "status", "--check").returncode, 0)
+        write(self.home, ".agd-ignore", "agentic-home:CLAUDE.md\n")
+        self.assertNotIn("CLAUDE.md", self.run_agd("--home", "status").stdout)
+
+    def test_root_files_already_in_the_lock_keep_updating(self):
+        # Installed in this folder before it was the home folder, as with agd -C ~ before these rules.
+        elsewhere = {**self.env, "HOME": str(self.project)}
+        self.assertEqual(self.run_agd("-C", str(self.home), "init", env=elsewhere).returncode, 0)
+        self.release("1.1.0", {"CLAUDE.md": "@AGENTS.md\n\nMore.\n"})
+        result = self.run_agd("--home", "update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.home / "CLAUDE.md").read_text(), "@AGENTS.md\n\nMore.\n")
+
+    def test_files_already_in_home_are_left_alone(self):
+        kit = self.kit("team", {".claude/CLAUDE.md": "Kit rules.\n", ".claude/skills/a/SKILL.md": "A.\n"})
+        write(self.home, ".claude/CLAUDE.md", "My own rules.\n@RTK.md\n")
+        result = self.run_agd("--home", "init", str(kit))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.home / ".claude/CLAUDE.md").read_text(), "My own rules.\n@RTK.md\n")
+        self.assertRegex(result.stdout, r"taken\s+\.claude/CLAUDE\.md \(your file has this path")
+        self.assertIn("your files already use", result.stdout)
+        self.assertNotIn("project file", self.run_agd("--home", "status").stdout)
+
+    # Advice that fits the folder
+
+    def test_a_pack_in_two_kits_is_named_with_the_home_option(self):
+        other = self.kit("team", {".claude/skills/a/SKILL.md": "A.\n"})
+        self.assertEqual(self.run_agd("--home", "init").returncode, 0)
+        self.assertEqual(self.run_agd("--home", "init", str(other)).returncode, 0)
+        result = self.run_agd("--home", "remove", "core")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("agd --home remove", result.stderr)
+
+    def test_advice_in_home_names_the_home_folder(self):
+        self.assertEqual(self.run_agd("--home", "init").returncode, 0)
+        self.tag(self.home_kit, "1.1.0", {".claude/agents/helper.md": "Helps more.\n"})
+        self.assertIn("run agd --home update", self.run_agd("--home", "status").stdout)
+        self.assertEqual(self.agd("init").returncode, 0)
+        self.release("1.1.0")
+        self.assertIn("run agd update", self.agd("status").stdout)
+
+    def test_no_git_advice_outside_a_git_work_tree(self):
+        self.assertNotIn("Commit", self.agd("init").stdout)
+        self.release("1.1.0", {"CLAUDE.md": "@AGENTS.md\n\nMore.\n"})
+        self.assertNotIn("git diff", self.agd("update").stdout)
+        result = self.agd("uninstall", "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("git status", result.stdout)
+        self.assertNotIn("Commit", self.run_agd("--home", "init").stdout)
+
+    def test_git_advice_inside_a_git_work_tree(self):
+        for folder, agd in ((self.project, self.agd), (self.home, lambda *args: self.run_agd("--home", *args))):
+            with self.subTest(str(folder)):
+                run(["git", "init", "-q", "-b", "main"], folder)
+                self.assertIn("Commit .agd.lock along with the new files.", agd("init").stdout)
+                self.assertIn("Review the change with git status", agd("uninstall", "--yes").stdout)
+
+    # The note about a copy in the home folder
+
+    def test_status_notes_a_skill_or_agent_that_differs_from_the_home_copy(self):
+        self.assertEqual(self.agd("init").returncode, 0)
+        write(self.home, ".claude/skills/implementation/SKILL.md", "My own.\n")
+        write(self.home, ".claude/agents/developer.md", (self.project / ".claude/agents/developer.md").read_text())
+        write(self.home, "AGENTS.md", "Other rules, which stack rather than override.\n")
+        before = (self.project / ".agd.lock").read_text()
+        result = self.agd("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        notes = [line for line in result.stdout.splitlines() if line.startswith("home ")]
+        self.assertEqual(len(notes), 1, result.stdout)
+        self.assertIn(".claude/skills/implementation/SKILL.md", notes[0])
+        self.assertNotIn("Nothing to do.", result.stdout)
+        self.assertEqual(self.agd("status", "--check").returncode, 0)
+        self.assertEqual((self.project / ".agd.lock").read_text(), before)
+
+    def test_status_has_no_note_without_a_home_copy_or_in_home(self):
+        self.assertEqual(self.agd("init").returncode, 0)
+        self.assertNotIn("home ", self.agd("status").stdout)
+        self.assertEqual(self.run_agd("--home", "init").returncode, 0)
+        self.assertNotRegex(self.run_agd("--home", "status").stdout, r"(?m)^home ")
+        no_home = {key: value for key, value in self.env.items() if key != "HOME"}
+        self.assertEqual(self.run_agd("status", env=no_home).returncode, 0)
+
+
 class AgdCompletionTest(AgdCase):
     """agd completion prints shell scripts that ask agd __complete for the candidates."""
 
@@ -1931,14 +2425,18 @@ class AgdCompletionTest(AgdCase):
         for command in ("init", "status", "update", "add", "remove", "diff", "source", "feedback", "completion"):
             self.assertIn(command, commands)
         self.assertNotIn("__complete", commands)
-        self.assertEqual(self.complete("-"), ["--help", "--offline", "--version", "-C"])
-        self.assertEqual(self.complete("status", "--"), ["--check", "--offline"])
+        self.assertEqual(self.complete("-"), ["--help", "--home", "--offline", "--version", "-C"])
+        self.assertEqual(self.complete("status", "--"), ["--check", "--home", "--offline"])
         self.assertEqual(self.complete("completion", ""), ["bash", "zsh"])
         self.assertEqual(self.complete("source", ""), ["list", "remove"])
         self.assertIn("uninstall", commands)
-        self.assertEqual(self.complete("uninstall", "-"), ["--offline", "--yes", "-C"])
+        self.assertEqual(self.complete("uninstall", "-"), ["--home", "--offline", "--yes", "-C"])
         self.assertIn("check", commands)
         self.assertEqual(self.complete("check", ""), [":dirs"])
+
+    def test_home_completes_from_the_home_folders_lock(self):
+        write(self.home, ".agd.lock", "agd-lock 1\nsource team url 1.0.0\npack team core\nfile team .claude/skills/a/SKILL.md abc\n")
+        self.assertEqual(self.complete("--home", "diff", ""), [".claude/skills/a/SKILL.md"])
 
     def test_offers_the_packs_paths_sources_and_releases_of_the_project(self):
         self.assertEqual(self.complete("add", ""), ["react"])

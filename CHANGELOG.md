@@ -4,6 +4,18 @@ What changed in agd. The next version's changes are collected here; each release
 
 Version numbers: **major** when the lock or `packs.txt` format changes and projects or sources need manual steps, **minor** for new commands or options, **patch** for fixes.
 
+A bullet can end with the issues it touches: `(#12)` means this release fixes #12, `(ref #20)` means a related change that leaves #20 open, and they combine as `(ref #20, ref #11, #12)`. When the release is out, each issue gets a comment, and the fixed ones are closed.
+
+## 0.5.0 (unreleased)
+
+- `--home` works in your home folder, for every project on your machine: `agd --home init`, `agd --home update` and so on. It's a way to name the folder, so `-C ~` and running in `~` get the same rules. [Install for every project](https://zejnilovic.github.io/agd/guides/home/) explains them.
+- In your home folder, `agd init` without a source installs [agentic-home](https://github.com/Zejnilovic/agentic-home), a kit made for it, whose `kit-authoring` skill guides an agent through creating a kit. `AGD_HOME_SOURCE` replaces its URL.
+- In your home folder, agd installs only under `.claude/`, and never `.claude/settings.json`, because other files could load or run in every project: a root `CLAUDE.md`, `.zshenv`, `.ssh/authorized_keys`. `init` and `add` stop on a kit with such a file, and print the `.agd-ignore` lines that take only the kit's skills. A release that adds one skips it, with a notice, and updates the rest; files agd already manages there keep updating. `agd adopt` stops there too.
+- `agd status` in a project notes each skill or agent it installed that differs from the copy in your home folder, which your tools may use instead. It doesn't change the exit code.
+- Outside a git work tree, agd no longer advises you to commit or to use `git diff`. In your home folder, `taken` says "your file".
+- A new guide, [Create a kit](https://zejnilovic.github.io/agd/guides/create-a-kit/), goes from an empty repository to a first release, with what makes a good kit. The docs now use one set of words: a kit is what agd installs, and a kit source, or source, is the repository that holds it.
+- `agd check` warns about a `tools:` entry in a kit file, and about a `## This project` section in a file other than an `AGENTS.md`, since both belong to the project.
+
 ## 0.4.0 (2026-10-28)
 
 - `agd init` in a terminal asks which packs to install, unless `--with` names them. It lists each pack with its file count, the packs it needs and its agents and skills; you type numbers or names, or press Enter for every pack. With fzf installed, you pick them in fzf (Esc installs nothing). Packs come with the packs they require, and agd says which it added. Without a terminal, or with `--yes`, agd installs every pack as before, so scripts are unchanged.

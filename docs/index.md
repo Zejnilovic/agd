@@ -38,6 +38,6 @@ That installs [agentic-defaults](https://github.com/Zejnilovic/agentic-defaults)
 
 [Quick start](quick-start.md){ .md-button .md-button--primary } [All the ways to install](install.md){ .md-button }
 
-## Publish your own setup
+## Create your own kit
 
-Your team's agents, skills and rules can be a source too: a git repository with release tags, and a `packs.txt` that groups its files. Projects install it alone, or on top of agentic-defaults. [Publish your own agentic setup](sources.md) shows how.
+Your team's agents, skills and rules can be a kit too, in a kit source: a git repository with release tags, and a `packs.txt` that groups its files. Projects install it alone, or on top of agentic-defaults. [Create a kit](guides/create-a-kit.md) shows how.

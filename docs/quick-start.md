@@ -112,4 +112,4 @@ To drop your changes and take the source's file instead, use `agd reset <path>`.
 - [How agd works](concepts.md): the idea, and what an update does to each file.
 - [Keep it up to date](guides/updates.md), with a weekly check in CI.
 - [Combine sources](guides/combine-sources.md): your team's setup on top of agentic-defaults.
-- [Publish your own setup](sources.md).
+- [Create a kit](guides/create-a-kit.md) of your own.

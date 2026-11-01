@@ -30,8 +30,14 @@ flowchart LR
 
 ## Words agd uses
 
+**Kit**
+:   What agd installs in a project: a setup of instructions, agents, skills and hooks.
+
 **Source**
-:   A git repository that publishes a setup, such as [agentic-defaults](https://github.com/Zejnilovic/agentic-defaults) or your team's. agd names it after the repository. Its files sit in `kit/`, or wherever its `packs.txt` says. The output sometimes calls a source's files "the kit".
+:   A kit source: the git repository that holds a kit, such as [agentic-defaults](https://github.com/Zejnilovic/agentic-defaults) or your team's. agd names it after the repository. The kit's files sit in `kit/`, or wherever its `packs.txt` says.
+
+**Home kit**
+:   A kit for your home folder, which reaches [every project on your machine](guides/home.md). Its files are all under `.claude/`, and it has no `.claude/settings.json`.
 
 **Release**
 :   A tag like `v1.2.0` in the source. agd installs the newest one unless you name another, or a commit.

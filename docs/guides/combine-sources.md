@@ -65,4 +65,4 @@ agd deletes its files that you haven't changed, and keeps the ones you changed, 
 
 ## Publish your team's setup
 
-Any git repository with release tags can be a source. [Publish your own agentic setup](../sources.md) covers the layout, `packs.txt` and releases.
+Any git repository with release tags can be a source. [Create a kit](create-a-kit.md) walks through a first one, and [Kit sources](../sources.md) covers the layout, `packs.txt` and releases.

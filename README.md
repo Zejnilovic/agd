@@ -23,7 +23,7 @@
   <a href="https://zejnilovic.github.io/agd/install/">Install</a> ·
   <a href="https://zejnilovic.github.io/agd/quick-start/">Quick start</a> ·
   <a href="https://zejnilovic.github.io/agd/concepts/">How it works</a> ·
-  <a href="docs/sources.md">Publish your own setup</a>
+  <a href="docs/guides/create-a-kit.md">Create a kit</a>
 </p>
 
 ---
@@ -101,7 +101,7 @@ Commit `.agd.lock` with the files, so your team gets the same setup. The [quick 
 | `agd uninstall [--yes]` | Removes every source and `.agd.lock`, deleting the files you haven't changed. Asks about each file you changed. |
 | `agd feedback [<note>]` | Report a problem with kit files to the source that owns them, as an issue you review before posting. Without a note, it asks a few questions. |
 
-`-C <dir>` works in another folder, and `--offline` uses the cached copy of each source. `agd --help` lists everything, and [the reference](https://zejnilovic.github.io/agd/reference/commands/) has the details.
+`-C <dir>` works in another folder, `--home` works in your home folder, for every project on your machine, and `--offline` uses the cached copy of each source. `agd --help` lists everything, and [the reference](https://zejnilovic.github.io/agd/reference/commands/) has the details.
 
 ## Learn more
 
@@ -110,7 +110,9 @@ Commit `.agd.lock` with the files, so your team gets the same setup. The [quick 
 - [Keep it up to date](https://zejnilovic.github.io/agd/guides/updates/), and [automatically](https://zejnilovic.github.io/agd/guides/automatic-updates/), with a weekly pull request from CI.
 - [Mirrors, proxies and offline machines](https://zejnilovic.github.io/agd/guides/company-networks/): agd on company networks.
 - [Combine sources](https://zejnilovic.github.io/agd/guides/combine-sources/): your team's setup on top of agentic-defaults.
-- [Publish your own agentic setup](docs/sources.md): the layout, `packs.txt`, releases, and `agd check` before you tag one.
+- [Install for every project](docs/guides/home.md): `agd --home init`, and the rules for your home folder.
+- [Create a kit](docs/guides/create-a-kit.md): from an empty repository to a first release, by hand or with the `kit-authoring` skill.
+- [Kit sources](docs/sources.md): the reference for the layout, `packs.txt`, releases, and `agd check` before you tag one.
 - [FAQ](https://zejnilovic.github.io/agd/faq/), including [why not copy the files or use a git submodule](https://zejnilovic.github.io/agd/faq/#why-not-copy-the-files-or-use-a-git-submodule).
 
 ## Contributing
