@@ -6,7 +6,7 @@
 #
 # Usage: bash check.sh [--base <ref>] [--strict | --hook]
 #   default       uncommitted changes (staged, unstaged, untracked) against HEAD
-#   --base <ref>  also include commits since <ref>, e.g. --base origin/main for a branch or pull request
+#   --base <ref>  also include commits since <ref>, e.g. --base origin/<default branch> for committed work or a pull request; exits 2 if git can't compare with it
 #   --strict      exit 1 when there is something to check (for CI or pre-commit)
 #   --hook        for an agent's end-of-turn hook (Claude Code "Stop", GitHub Copilot "agentStop"): prints
 #                 {"decision": "block", "reason": ...} on stdout, once per distinct finding, which both tools
@@ -20,7 +20,9 @@ strict=0
 hook=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --base) base="${2:-}"; shift 2 ;;
+    --base)
+      case "${2:-}" in ""|-*) echo "--base needs a git ref, such as the repository's default branch." >&2; exit 2 ;; esac
+      base=$2; shift 2 ;;
     --strict) strict=1; shift ;;
     --hook) hook=1; shift ;;
     -h|--help) sed -n '3,16p' "$0"; exit 0 ;;
@@ -38,10 +40,17 @@ fi
 root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "Not a git repository." >&2; exit 2; }
 cd "$root" || exit 2
 
-changed=$(mktemp); owners=$(mktemp); kit=$(mktemp)
-trap 'rm -f "$changed" "$owners" "$kit"' EXIT
+changed=$(mktemp); owners=$(mktemp); kit=$(mktemp); branch=$(mktemp)
+trap 'rm -f "$changed" "$owners" "$kit" "$branch"' EXIT
 
 # -z gives raw paths; without it git puts quotes around paths that contain quotes or backslashes.
+# Compare with --base before the pipeline below: a failure inside it would only leave its subshell.
+if [ -n "$base" ] && ! error=$(git diff --name-only -z "$base"...HEAD 2>&1 >"$branch"); then
+  [ "$hook" = 1 ] && exit 0
+  echo "Can't compare with $base: $(printf '%s\n' "$error" | head -1)" >&2
+  echo "The ref must exist here and share history with HEAD. In CI, check out the full history (GitHub Actions: fetch-depth: 0)." >&2
+  exit 2
+fi
 {
   if git rev-parse --verify -q HEAD >/dev/null; then
     git diff --name-only -z HEAD
@@ -49,9 +58,7 @@ trap 'rm -f "$changed" "$owners" "$kit"' EXIT
     git ls-files -z
   fi
   git ls-files -z --others --exclude-standard
-  if [ -n "$base" ]; then
-    git diff --name-only -z "$base"...HEAD || exit 2
-  fi
+  cat "$branch"
 } | tr '\0' '\n' | sort -u > "$changed"
 
 # Files installed by agd belong to their source, not to the project: skip every path .agd.lock lists
@@ -68,12 +75,26 @@ trap 'rm -f "$changed" "$owners" "$kit"' EXIT
 # Changes that never require a CONTEXT.md update: docs, private notes, housekeeping files, tests, lock files.
 skip='(^|/)CONTEXT\.md$|^\.agd\.lock$|\.md$|^docs?/|^\.local_context/|(^|/)(LICENSE|COPYING|NOTICE|CHANGELOG|VERSION)[^/]*$|(^|/)\.(gitignore|gitattributes|editorconfig|mailmap)$|(^|/)(test|tests|__tests__|spec|specs|e2e)/|(^|/)test_[^/]+\.py$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$|Tests?\.(java|kt|cs|swift|scala)$|(^|/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|uv\.lock|Cargo\.lock|go\.sum|Gemfile\.lock|composer\.lock)$'
 
+# Dependency bumps (Renovate, Dependabot) change only versions, which no CONTEXT.md records. A manifest is
+# skipped when its removed and added lines match once versions and digests are masked; a new or removed
+# dependency, any other edit, or a new manifest still counts.
+manifest='(^|/)(requirements[^/]*\.txt|constraints[^/]*\.txt|pyproject\.toml|Pipfile|package\.json|go\.mod|Cargo\.toml|Gemfile|pom\.xml|build\.gradle(\.kts)?|libs\.versions\.toml|Dockerfile[^/]*|\.tool-versions|\.python-version|\.nvmrc|versions\.tf)$|^\.github/workflows/[^/]+\.ya?ml$'
+since=HEAD
+[ -n "$base" ] && since=$(git merge-base "$base" HEAD 2>/dev/null)
+version_only() {
+  [ -n "$since" ] && [ -f "$1" ] && git cat-file -e "$since:$1" 2>/dev/null || return 1
+  lines=$(git diff -U0 "$since" -- "$1" | grep -Ev '^(---|\+\+\+) ' | grep -E '^[-+]' |
+    sed -E 's/[0-9a-f]{7,}/H/g; s/v?[0-9]+([.][0-9A-Za-z]+)*([-+][0-9A-Za-z.]+)?/V/g')
+  [ "$(printf '%s\n' "$lines" | sed -n 's/^-//p' | sort)" = "$(printf '%s\n' "$lines" | sed -n 's/^+//p' | sort)" ]
+}
+
 # Pair each changed code file with the nearest CONTEXT.md above it.
 grep -Ev "$skip" "$changed" | awk -v kit="$kit" '
   BEGIN { while ((getline line < kit) > 0) installed[line] = 1 }
   !($0 in installed)
 ' | while IFS= read -r file; do
   [ -n "$file" ] || continue
+  printf '%s\n' "$file" | grep -Eq "$manifest" && version_only "$file" && continue
   dir=$(dirname "$file")
   owner="-"
   while :; do

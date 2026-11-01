@@ -1,4 +1,4 @@
-<!-- agentic-defaults 0.5.1. From agentic-defaults down to "This project": kit updates replace it, so don't edit it. The rest belongs to the project. -->
+<!-- agentic-defaults 0.5.3. From agentic-defaults down to "This project": kit updates replace it, so don't edit it. The rest belongs to the project. -->
 
 # Working agreement
 
@@ -42,7 +42,7 @@ Files and parts marked "From agentic-defaults" are replaced when the kit updates
 ## Done means
 
 - The requested behavior works and is tested, and `make check` (or the equivalent below) passes. Report failures with their output.
-- The last step of every task is the context check: run `bash .claude/skills/context-md/check.sh`, then update each `CONTEXT.md` your change made wrong or incomplete, or say why none needs it. Update the plan, if there is one.
+- The last step of every task is the context check: run `bash .claude/skills/context-md/check.sh` (add `--base origin/<default branch>` if the work is already committed), then update each `CONTEXT.md` your change made wrong or incomplete, or say why none needs it. Update the plan, if there is one.
 - There are no unrelated changes.
 
 ---
@@ -97,7 +97,7 @@ No Makefile yet; these are the real commands under the standard names.
 ### Docs
 
 - The site, https://zejnilovic.github.io/agd, is built from `docs/` and `mkdocs.yml` by the Docs workflow on every push to `main`. `README.md` is its short version.
-- Change the docs with the behavior, in the same change. Show real output: run the commands rather than writing it by hand.
+- Change the docs with the behavior, in the same change. Show real output: run the commands rather than writing it by hand. When the source layout, the project parts or `agd check` change, also update `docs/guides/create-a-kit.md` and the `kit-authoring` skill in `kit/`.
 - People copy these into their scripts, so keep them working: the install script's URL, `https://raw.githubusercontent.com/Zejnilovic/agd/main/install.sh`, and the release files `agd` and `SHA256SUMS` under `releases/latest/download/`.
 
 ### Contracts
