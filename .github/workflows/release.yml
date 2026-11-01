@@ -2,8 +2,9 @@ name: Release
 
 # Releases VERSION: dates its CHANGELOG.md entry, tags the release commit v<version>, creates the GitHub
 # release with the archive agd-<version>.tar.gz, the plain script agd and their SHA256SUMS, attests that this
-# workflow built them, and points the formula in Zejnilovic/homebrew-tap at the archive. Then it installs the
-# release every documented way, and checks the plain script's attestation.
+# workflow built them, and points the formula in Zejnilovic/homebrew-tap at the archive. It closes or comments on
+# the issues the notes name. Then it installs the release every documented way, and checks the plain script's
+# attestation.
 # Start it from the Actions tab. A dry run does everything but push, and shows the notes and the formula; it
 # attests the files it built too, so the attestation is tested before a release.
 on:
@@ -27,6 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Closing and commenting on the issues the release notes name.
+      issues: write
       # Build provenance: a Sigstore certificate from the OIDC token, stored as the repository's attestation.
       id-token: write
       attestations: write
@@ -49,6 +52,14 @@ jobs:
           if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then echo "v$version is already released"; exit 1; fi
           { echo "VERSION=$version"; echo "NOTES=$NOTES"; echo "DIST=$RUNNER_TEMP/dist"; echo "ARCHIVE=$RUNNER_TEMP/dist/agd-$version.tar.gz"; } >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Before anything is pushed, so a wrong issue number stops the release, on dry runs too.
+      - name: Check the issues the notes name
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo '## Issues'; echo; } >> "$GITHUB_STEP_SUMMARY"
+          python3 scripts/close_issues.py --version "$VERSION" --notes "$NOTES" --dry-run | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Commit, tag and build the release files
         run: |
           git config user.name "github-actions[bot]"
@@ -99,6 +110,15 @@ jobs:
           git add Formula/agd.rb
           git commit -q -m "agd $VERSION"
           git push -q "https://x-access-token:$TAP_TOKEN@github.com/Zejnilovic/homebrew-tap.git" HEAD
+      # In this job, because GITHUB_TOKEN's events don't start other workflows, and last, because an issue counts as
+      # fixed only once the release is out. If it fails, run it again by hand with the notes from the summary: it
+      # skips what is already done.
+      - name: Close and comment on issues
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/close_issues.py --version "$VERSION" --notes "$NOTES" | tee -a "$GITHUB_STEP_SUMMARY"
 
   verify:
     # Installs the new release the way people will, and runs the formula's test.

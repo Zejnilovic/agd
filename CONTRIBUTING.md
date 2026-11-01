@@ -39,4 +39,5 @@ Keep the pages true to the script: show real output, and change the docs in the 
 
 - Keep one change per pull request, with its tests and docs.
 - Add a line describing it to the "(unreleased)" entry at the top of [`CHANGELOG.md`](CHANGELOG.md). If there is none, the maintainer adds the next version with `bash scripts/bump.sh`.
+- If the change fixes an issue, end that line with `(#12)`, or `(ref #12)` for a related change that leaves it open. The issue is closed when the release is out, so in commit messages write `Refs #12`, never "fixes #12".
 - The maintainer releases with the Release workflow; see "Versions and releases" in `AGENTS.md`.
