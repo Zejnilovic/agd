@@ -6,7 +6,7 @@ Version numbers: **major** when the lock or `packs.txt` format changes and proje
 
 A bullet can end with the issues it touches: `(#12)` means this release fixes #12, `(ref #20)` means a related change that leaves #20 open, and they combine as `(ref #20, ref #11, #12)`. When the release is out, each issue gets a comment, and the fixed ones are closed.
 
-## 0.5.0 (unreleased)
+## 0.5.0 (2026-11-01)
 
 - `--home` works in your home folder, for every project on your machine: `agd --home init`, `agd --home update` and so on. It's a way to name the folder, so `-C ~` and running in `~` get the same rules. [Install for every project](https://zejnilovic.github.io/agd/guides/home/) explains them.
 - In your home folder, `agd init` without a source installs [agentic-home](https://github.com/Zejnilovic/agentic-home), a kit made for it, whose `kit-authoring` skill guides an agent through creating a kit. `AGD_HOME_SOURCE` replaces its URL.
