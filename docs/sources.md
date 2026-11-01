@@ -9,7 +9,7 @@ A source is a git repository with release tags, `v1.0.0` and so on. The files of
 - **In `kit/`** (the default). `kit/AGENTS.md` lands as `AGENTS.md` in a project, and `kit/.claude/agents/reviewer.md` as `.claude/agents/reviewer.md`. Everything else in the repository, such as its README, tests and scripts, stays out.
 - **At the repository's root**, with `root .` in `packs.txt`. Use it when the repository already keeps its setup at its root, for example because it uses it itself. Only files listed in a pack are installed, so the README and the code stay out.
 
-Paths can't contain spaces or quotes.
+Paths can't contain spaces or quotes, and can't have a `.`, `..` or `.git` folder: a release with such a path can't be installed.
 
 ## packs.txt
 
@@ -71,7 +71,7 @@ A project can install your source next to others with `agd init your-org/your-se
 
 ## For the home folder
 
-A kit whose files are all under `.claude/`, without a `.claude/settings.json`, can also go in a person's home folder, with `agd --home init`, and reach every project on their machine. agd stops on a kit with anything else. [Create a kit](guides/create-a-kit.md#a-kit-for-the-home-folder) has the rest.
+A kit whose files are all under `.claude/`, with plain ASCII names and no `.claude/settings*` files, can also go in a person's home folder, with `agd --home init`, and reach every project on their machine. agd stops on a kit with anything else. [Create a kit](guides/create-a-kit.md#a-kit-for-the-home-folder) has the rest.
 
 ## Try it before you release
 

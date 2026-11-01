@@ -134,9 +134,9 @@ For each later release, add a new tag and write release notes, including any man
 
 A home kit applies to every project on a person's machine, installed with `agd --home init your-org/team-home`. Build it the same way, with a few differences:
 
-- **Only files under `.claude/`.** [agd stops on anything else](home.md#when-agd-stops), including a root `CLAUDE.md` or `AGENTS.md`, which would load in every project under the home folder.
+- **Only files under `.claude/`, with plain ASCII names.** [agd stops on anything else](home.md#when-agd-stops), including a root `CLAUDE.md` or `AGENTS.md`, which would load in every project under the home folder.
 - **Put rules in `.claude/rules/<name>.md`.** Most people already have a `~/.claude/CLAUDE.md`, and agd leaves it alone, so a kit's copy wouldn't install for them.
-- **No `.claude/settings.json`.** agd stops on that too, since its hooks would run in every project. Tell people what to add to their own settings instead.
+- **No `.claude/settings*` files.** agd stops on those too, since its hooks would run in every project. Tell people what to add to their own settings instead.
 - **Choose distinctive skill names.** A personal skill beats a project's skill with the same name.
 
 To try it without touching your own home folder, point `HOME` at a scratch folder:

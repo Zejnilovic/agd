@@ -42,7 +42,7 @@ flowchart LR
 - Pack: a named set of kit paths in `packs.txt`, with `requires` on other packs. `min-agd` names the oldest agd that can install the source.
 - Project parts: what updates keep in a kit file: an agent's `model:` and `tools:` front-matter lines, and a closing `## This project` section of a Markdown file (`part()` and `compose()` in `bin/agd`).
 - Taken: a project file already at a kit path; `init` leaves it and doesn't install that file.
-- Home rules: what changes when the target folder is `$HOME` (`at_home`). Other default source, installs only under `.claude/` and never `.claude/settings.json` (`home_allows`), and no `adopt`. A home kit is any kit that fits, once `.agd-ignore` applies; `packs.txt` has no marker for it. `docs/guides/home.md` has the reasons.
+- Home rules: what changes when the target folder is `$HOME` (`at_home`). Other default source, installs only under `.claude/`, with plain ASCII names and never `.claude/settings*` (`home_allows`), and no `adopt`. A home kit is any kit that fits, once `.agd-ignore` applies; `packs.txt` has no marker for it. `docs/guides/home.md` has the reasons.
 
 ## Contracts
 
@@ -68,6 +68,7 @@ Commands are in AGENTS.md "This project". The tests need only git, bash and Pyth
 ## Invariants and gotchas
 
 - `at_home` compares `$HOME` and the target folder with `pwd -P`, so `--home`, `-C ~` and `cd ~` all count; `--home` only sets `dir`. `init` and `add` call `stop_outside_home_kit` before writing. `update` writes source by source, so it can't stop cleanly: `examine` emits `outside` instead, and `status` and `update` print `skipped`. `home_allows` ignores case, since a case-insensitive disk would treat `.claude/SETTINGS.JSON` as `settings.json`. Paths already in the lock pass both, so installs from before these rules keep updating. Tests get a temporary `HOME` from `AgdCase.setUp`, since `status` reads the home folder (`home_copies`).
+- `kit_blobs` refuses a path with a `.`, `..` or `.git` folder for every install, since a git host other than GitHub can serve such trees. Tests build them with `git mktree` (`AgdUnsafePathTest`).
 - `advise` prints git advice only inside a git work tree. Tests' projects aren't git repositories unless a test makes them one.
 - The `kit-authoring` skill lives in Zejnilovic/agentic-home, not here, so an agd release is not a skill release.
 - `.gitattributes` export-ignores the agentic setup, so the release archive (`git archive` in `release.yml`) holds agd only. `ReleaseTest.test_archive_leaves_out_the_agentic_setup` checks it.

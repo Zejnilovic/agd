@@ -30,7 +30,7 @@ Whatever lands in your home folder can reach every project under it, so a few ru
 | Situation | In a project | In your home folder |
 |---|---|---|
 | `agd init` without a source | Installs agentic-defaults | Installs agentic-home |
-| The kit has a file outside `.claude/`, or a `.claude/settings.json` | Installs it | [Stops and explains](#when-agd-stops) |
+| The kit has a file outside `.claude/`, or a `.claude/settings*` file | Installs it | [Stops and explains](#when-agd-stops) |
 | A later release adds such a file | Installs it | Skips that file, with a notice, and updates the rest |
 | `agd adopt` | Manages an existing copy | Stops |
 
@@ -38,7 +38,7 @@ Everything else works as it does in a project. A file you already have at a kit'
 
 ## Home kits
 
-A home kit is a kit whose files are all under `.claude/`, apart from `.claude/settings.json`, once `.agd-ignore` is applied. It needs no marker, because agd can tell from its paths. A kit of only skills and agents counts, whoever wrote it. [Create a kit](create-a-kit.md#a-kit-for-the-home-folder) shows how to make one.
+A home kit is a kit whose files are all under `.claude/`, with plain ASCII names and no `.claude/settings*` files, once `.agd-ignore` is applied. It needs no marker, because agd can tell from its paths. A kit of only skills and agents counts, whoever wrote it. [Create a kit](create-a-kit.md#a-kit-for-the-home-folder) shows how to make one.
 
 ## When agd stops
 
@@ -53,17 +53,17 @@ So agd installs nothing and explains:
 ```text
 $ agd --home init Zejnilovic/agentic-defaults --with core
 agd: agentic-defaults isn't a home kit, so agd won't install it in your home folder.
-There, agd installs only under .claude/, and never .claude/settings.json, because other files could load or run in every project.
+There, agd installs only under .claude/, and never a settings file, because other files could load or run in every project.
 This kit has AGENTS.md, CLAUDE.md, .local_context/*.
 
 Use a kit made for home:
   agd --home init
 
 Or take only this kit's skills: add these lines to ~/.agd-ignore, then run this again:
-  agentic-defaults:AGENTS.md
-  agentic-defaults:CLAUDE.md
-  agentic-defaults:.claude/agents/*
-  agentic-defaults:.local_context/*
+agentic-defaults:AGENTS.md
+agentic-defaults:CLAUDE.md
+agentic-defaults:.claude/agents/*
+agentic-defaults:.local_context/*
 ```
 
 ## Take only a kit's skills
@@ -108,7 +108,7 @@ home     .claude/skills/context-md/SKILL.md: your home folder has a different co
 ## Good to know
 
 - **Read a kit before you install it at home.** The limit keeps a kit inside `.claude/`, but it doesn't make the kit safe: its text reaches every project, and a skill or agent can hold scripts for an agent to run and [hooks of its own](https://code.claude.com/docs/en/hooks). `agd --home status` shows what an update would change before you run it.
-- **Hooks in your settings.** agd never installs `.claude/settings.json` in your home folder, so to turn on a hook for every project, add it to your own settings.
+- **Hooks in your settings.** agd never installs a `.claude/settings*` file in your home folder, so to turn on a hook for every project, add it to your own settings.
 - **Older installs.** Files agd already manages in your home folder keep updating, even outside `.claude/`. `agd --home source list` and `.agd.lock` show what you have.
 - **Skill folders.** agd leaves files you already have alone one at a time, so your copy and a kit's can mix when both have the same skill folder. `agd --home status` lists each `taken` file.
 - **Other tools and moved folders.** `--home` means `$HOME` and nothing else. The rules above are written for Claude Code, so other tools' folders, such as `~/.codex/`, count as outside `.claude/`. agd doesn't follow `CLAUDE_CONFIG_DIR`.

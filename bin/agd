@@ -36,7 +36,7 @@
 #   -C <dir>                work in <dir> instead of the current folder
 #   --home                    work in your home folder, for every project on this machine. There,
 #                             init without a source installs agentic-home, and agd installs only under
-#                             .claude/, without .claude/settings.json. A kit with other files stops,
+#                             .claude/, and never a settings file. A kit with other files stops,
 #                             with an explanation. The same goes for -C ~ and for running in ~.
 #   --offline                 use the cached copy of each source instead of fetching it
 #   --version, --help
@@ -289,6 +289,10 @@ kit_blobs() { # <root> <ls-tree -r output>: prints "<mode> <blob> <path>", the p
   # each path agd refuses on stderr, when one has spaces, quotes or backslashes
   awk -F '\t' -v root="$1" '{ split($1, m, " "); path = substr($2, length(root) + 1)
       if (path ~ /[[:space:]"\\]/) { print "agd: kit paths can'\''t contain spaces or quotes: " path > "/dev/stderr"; bad = 1 }
+      n = split(path, part, "/")
+      for (i = 1; i <= n; i++) { p = tolower(part[i])
+        if (p == "" || p == "." || p == ".." || p == "git~1" || p ~ /^\.git\.*$/) {
+          print "agd: kit paths can'\''t leave the project or reach into .git: " path > "/dev/stderr"; bad = 1; break } }
       print m[1], m[3], path }
     END { exit bad }' "$2"
 }
@@ -526,7 +530,9 @@ need_lock() { [ -f "$project/$lock_file" ] || die "no $lock_file in $project: ru
 in_git() { git -C "$project" rev-parse --is-inside-work-tree >/dev/null 2>&1 </dev/null; }
 advise() { if in_git; then echo "$1"; fi; } # <text>: advice that only makes sense under git
 home_allows() { # <path>: what a kit may install in the home folder. Elsewhere, a file can load or run in every project,
-  # or at every login. Ignores case, since a Mac's disk does: .claude/SETTINGS.JSON would act as settings.json.
+  # or at every login. A Mac's disk folds case, and letters such as the long s, so .claude/SETTINGS.JSON or a name with
+  # that letter would act as settings.json: names must be plain ASCII, and the check ignores case.
+  if printf '%s' "$1" | LC_ALL=C grep -q '[^ -~]'; then return 1; fi
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
     .claude/settings*) return 1 ;;
     .claude/*) return 0 ;;
@@ -733,7 +739,7 @@ stop_outside_home_kit() { # <source> <file of "<pack> <mode> <blob> <path>"> <fi
   fi
   {
     echo "agd: $1 isn't a home kit, so agd won't install it in your home folder."
-    echo "There, agd installs only under .claude/, and never .claude/settings.json, because other files could load or run in every project."
+    echo "There, agd installs only under .claude/, and never a settings file, because other files could load or run in every project."
     echo "This kit has $(ignore_patterns <"$tmp/h.refused" | awk '{ s = s (NR > 1 ? ", " : "") $0 } END { print s }')."
     if [ -n "$how" ]; then
       echo
@@ -743,7 +749,7 @@ stop_outside_home_kit() { # <source> <file of "<pack> <mode> <blob> <path>"> <fi
     fi
     echo
     echo "$alone: add these lines to ~/$ignore_file, then run this again:"
-    ignore_patterns <"$tmp/h.leave" | awk -v s="$1" '{ print "  " s ":" $0 }'
+    ignore_patterns <"$tmp/h.leave" | awk -v s="$1" '{ print s ":" $0 }'
   } >&2
   exit 2
 }
@@ -947,7 +953,7 @@ cmd_source() {
 }
 
 outside_note() { # <path> <source>
-  echo "skipped  $1 (in your home folder, agd installs only under .claude/, and never .claude/settings.json: add $2:$1 to ~/$ignore_file to stop this notice)"
+  echo "skipped  $1 (in your home folder, agd installs only under .claude/, and never a settings file: add $2:$1 to ~/$ignore_file to stop this notice)"
 }
 
 home_copies() { # one line per skill or agent installed here that differs from the same path in the home folder

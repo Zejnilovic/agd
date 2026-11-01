@@ -186,7 +186,8 @@ class MarkerRuleTest(unittest.TestCase):
 
     def test_bad_markers_and_closing_words_are_problems(self):
         for notes in ("- A change. (part of #20)\n", "- A change. (refs #20)\n", "- A change. (#20 #21)\n",
-                      "- This closes #12 for good.\n", "- Fixes #12.\n", "- Long\n  and resolved #12 here.\n"):
+                      "- This closes #12 for good.\n", "- Fixes #12.\n", "- Long\n  and resolved #12 here.\n",
+                      "- A change (#12).\n", "- A change (#12) (#13)\n", "- A change (ref #12) (#13).\n"):
             self.assertEqual(len(marker_problems(notes)), 1, notes)
 
     def test_the_unreleased_changelog_entry_has_no_problems(self):
@@ -2193,12 +2194,12 @@ class AgdHomeTest(AgdCase):
         self.assertIn("This kit has AGENTS.md, CLAUDE.md.", result.stderr)
         self.assertIn("agd --home init\n", result.stderr)
         self.assertIn("~/.agd-ignore", result.stderr)
-        lines = [line.strip() for line in result.stderr.splitlines() if line.startswith("  source:")]
+        lines = [line for line in result.stderr.splitlines() if line.startswith("source:")]
         self.assertEqual(lines, ["source:AGENTS.md", "source:CLAUDE.md", "source:.claude/agents/*"])
 
     def test_the_printed_lines_leave_only_the_skills_and_other_kits_alone(self):
         stopped = self.run_agd("--home", "init", str(self.source))
-        lines = [line.strip() for line in stopped.stderr.splitlines() if line.startswith("  source:")]
+        lines = [line for line in stopped.stderr.splitlines() if line.startswith("source:")]
         write(self.home, ".agd-ignore", "\n".join(lines) + "\n")
         result = self.run_agd("--home", "init", str(self.source))
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -2231,7 +2232,7 @@ class AgdHomeTest(AgdCase):
         self.assertIn("This kit has CLAUDE.md.", result.stderr)
         self.assertNotIn("skills", result.stderr)
         self.assertIn("Or leave those files out", result.stderr)
-        lines = [line.strip() for line in result.stderr.splitlines() if line.startswith("  rules:")]
+        lines = [line for line in result.stderr.splitlines() if line.startswith("rules:")]
         self.assertEqual(lines, ["rules:CLAUDE.md"])
         write(self.home, ".agd-ignore", "rules:CLAUDE.md\n")
         self.assertEqual(self.run_agd("--home", "init", str(kit)).returncode, 0)
@@ -2240,7 +2241,9 @@ class AgdHomeTest(AgdCase):
 
     def test_a_home_kit_installs_only_under_claude(self):
         paths = (".zshenv", ".ssh/authorized_keys", "Library/LaunchAgents/com.example.plist", ".local/bin/git",
-                 ".claude.json", ".claude/settings.json", ".claude/settings.local.json", ".claude/SETTINGS.JSON")
+                 ".claude.json", ".claude/settings.json", ".claude/settings.local.json", ".claude/SETTINGS.JSON",
+                 # A Mac's disk folds this long s to an s, so it would act as settings.json.
+                 ".claude/\u017fettings.json")
         for number, path in enumerate(paths):
             with self.subTest(path):
                 kit = self.kit(f"kit{number}", {path: "Runs.\n", ".claude/skills/a/SKILL.md": "A.\n"})
@@ -2248,7 +2251,7 @@ class AgdHomeTest(AgdCase):
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertIn("isn't a home kit", result.stderr)
                 self.assertEqual(self.home_files(), [])
-                lines = [line.strip() for line in result.stderr.splitlines() if line.startswith(f"  kit{number}:")]
+                lines = [line for line in result.stderr.splitlines() if line.startswith(f"kit{number}:")]
                 write(self.home, ".agd-ignore", "\n".join(lines) + "\n")
                 result = self.run_agd("--home", "init", str(kit))
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -2397,6 +2400,41 @@ class AgdHomeTest(AgdCase):
         self.assertNotRegex(self.run_agd("--home", "status").stdout, r"(?m)^home ")
         no_home = {key: value for key, value in self.env.items() if key != "HOME"}
         self.assertEqual(self.run_agd("status", env=no_home).returncode, 0)
+
+
+class AgdUnsafePathTest(AgdCase):
+    """A hostile git host can serve trees GitHub refuses, with paths that leave the project or reach into .git."""
+
+    def hostile_kit(self, name, folder):
+        """A source at release 1.0.0 whose only file is kit/<folder>/PWNED."""
+        repo = pathlib.Path(self._tmp.name) / name
+        repo.mkdir()
+        run(["git", "init", "-q", "-b", "main"], repo)
+
+        def git(*args, stdin=""):
+            done = subprocess.run(["git", *args], cwd=repo, env=GIT_ENV, input=stdin, capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return done.stdout.strip()
+
+        blob = git("hash-object", "-w", "--stdin", stdin="Runs.\n")
+        tree = git("mktree", "--missing", stdin=f"100644 blob {blob}\tPWNED\n")
+        tree = git("mktree", "--missing", stdin=f"040000 tree {tree}\t{folder}\n")
+        tree = git("mktree", "--missing", stdin=f"040000 tree {tree}\tkit\n")
+        git("tag", "v1.0.0", git("commit-tree", tree, "-m", "1.0.0"))
+        return repo
+
+    def test_a_path_that_leaves_the_project_or_reaches_git_cant_install(self):
+        run(["git", "init", "-q", "-b", "main"], self.project)
+        folders = ("..", ".", ".git", ".GIT", ".git.", "git~1")
+        for number, folder in enumerate(folders):
+            with self.subTest(folder):
+                result = self.agd("init", str(self.hostile_kit(f"hostile{number}", folder)))
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn("can't be installed", result.stderr)
+                self.assertIn("PWNED", result.stderr)
+                written = [str(path) for path in pathlib.Path(self._tmp.name).rglob("PWNED") if "cache" not in path.parts]
+                self.assertEqual(written, [])
+                self.assertFalse((self.project / ".agd.lock").exists())
 
 
 class AgdCompletionTest(AgdCase):
