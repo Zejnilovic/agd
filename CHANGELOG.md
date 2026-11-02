@@ -10,6 +10,7 @@ A bullet can end with the issues it touches: `(#12)` means this release fixes #1
 
 - `agd init` stops when the packs it would install have no files, instead of reporting "Installed ... 0 files" and writing a lock. A repository in another layout, such as `skills/<name>/SKILL.md`, used to get that success message. A release whose files are all ignored or taken still installs, as before.
 - `agd check` reports the same case as an error: no pack lists a file.
+- A kit's skill folder installs whole or not at all. When a project already has a file in it, `init`, `add` and `update` report every file of the folder as `taken` and install none, so a project's skill and a kit's no longer mix, and agd no longer writes through a linked skill folder. An ignored file doesn't count, and a folder agd already manages part of keeps updating file by file.
 - The FAQ explains how agd and [skills.sh](https://www.skills.sh/) fit together.
 
 ## 0.5.0 (2026-11-01)

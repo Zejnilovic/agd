@@ -58,7 +58,8 @@ A project's `.agd.lock` lists every file agd installed, the source it came from,
 
 - an unchanged file gets your new version,
 - a file you removed from your source is deleted when the project hasn't changed it, and is left to the project when it has,
-- a new file in a pack the project has is installed, unless a project file already uses that path.
+- a new file in a pack the project has is installed, unless a project file already uses that path,
+- a skill folder, one with a `SKILL.md`, installs whole or not at all: when a project file uses one of its paths and agd manages none of them, none are installed.
 
 Files a project wrote itself are never touched, even when your release ships a file at the same path.
 

@@ -21,7 +21,7 @@ Partly. Both use `SKILL.md` files and `.claude/skills/`, but they find, install 
 
 - **Installing a kit's skills with the [skills CLI](https://github.com/vercel-labs/skills).** Its search should find skills under `kit/.claude/skills/`, so `npx skills add <owner>/<kit>` can take them. You get only the skills, not the kit's `AGENTS.md` or agents, and agd doesn't track or update them.
 - **Installing a skills.sh repository with agd.** Most keep their skills in `skills/<name>/`, without `packs.txt` or `v1.2.3` tags. agd copies paths as they are, so `skills/` wouldn't reach `.claude/skills/`. The repository needs the [source layout](sources.md#the-layout): the skills under `.claude/skills/` in its kit, listed in a pack, with a release tag or a commit to install.
-- **Using both in one project.** It works, but keep each skill with one tool. A file the skills CLI already installed counts as `taken`, so agd leaves it alone, while it still installs the other files of that skill's folder.
+- **Using both in one project.** It works, but keep each skill with one tool. When the skills CLI already installed a skill with the same folder name, agd reports that folder's files as `taken` and installs none of them, so it doesn't mix the two.
 
 ## Does agd run code from a source?
 

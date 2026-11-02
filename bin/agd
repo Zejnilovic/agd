@@ -429,10 +429,32 @@ value() { # <model: line>: its value, or none
   echo "${v:-none}"
 }
 
+pack_paths() { # <file of packs> <file of "<pack> <mode> <blob> <path>">: the paths in those packs
+  awk 'FILENAME == ARGV[1] { want[$1]; next } $1 in want { print $4 }' "$1" "$2"
+}
+
+# A skill's files belong together, so its folder installs whole or not at all. A folder agd already manages part of
+# keeps going file by file, so installs from before this rule keep updating.
+taken_skills() { # <kit paths> <taken paths> <file with lock lines>: each kit folder with a SKILL.md, ending in /, where
+  # the project has a kit path and agd manages nothing
+  awk 'FILENAME == ARGV[1] { if ($0 ~ /\/SKILL\.md$/) { sub(/SKILL\.md$/, ""); dir[$0] = 1 } next }
+    { if (FILENAME == ARGV[2]) p = $0; else if ($1 == "file") p = $3; else next
+      for (d in dir) if (substr(p, 1, length(d)) == d) { if (FILENAME == ARGV[2]) taken[d] = 1; else managed[d] = 1 } }
+    END { for (d in taken) if (!(d in managed)) print d }' "$1" "$2" "$3"
+}
+
+in_taken_skill() { # <path>: succeeds when it is under a folder in $tmp/taken.skills
+  awk -v p="$1" 'substr(p, 1, length($0)) == $0 { found = 1 } END { exit !found }' "$tmp/taken.skills"
+}
+
+taken_skill_note() { # <path>
+  echo "taken    $1 (the skill folder has $taken_file, so the kit's skill isn't installed)"
+}
+
 # Compares the project with release <target> of a source and writes what an update would do to
 # $tmp/actions, one "<action> <path> [<details>]" line each, and the packs it selects to $tmp/selected.
 examine() { # <name> <installed version> <target version> <cache>
-  local name=$1 base=$2 target=$3 cache=$4 path sha mode new dst changed parts bm pm nm tools
+  local name=$1 base=$2 target=$3 cache=$4 path sha mode new dst changed parts bm pm nm tools kind
   load "$cache" "$base" base
   load "$cache" "$target" target
   : >"$tmp/actions"
@@ -500,7 +522,14 @@ examine() { # <name> <installed version> <target version> <cache>
     if [ "$at_home" = 1 ] && ! home_allows "$path"; then echo "outside $path"
     elif [ -e "$project/$path" ]; then echo "taken $path"
     else echo "new $path $new $mode"; fi
-  done <"$tmp/target.selected" >>"$tmp/actions"
+  done <"$tmp/target.selected" >"$tmp/arriving"
+  awk '{ print $1 }' "$tmp/target.selected" >"$tmp/kit.paths"
+  awk '$1 == "taken" { print $2 }' "$tmp/arriving" >"$tmp/taken.paths"
+  taken_skills "$tmp/kit.paths" "$tmp/taken.paths" "$project/$lock_file" >"$tmp/taken.skills"
+  while read -r kind path new mode; do
+    if [ "$kind" = new ] && in_taken_skill "$path"; then echo "skill-taken $path"
+    else echo "$kind $path $new $mode"; fi
+  done <"$tmp/arriving" >>"$tmp/actions"
 }
 
 notes() { # <url> <from> <to> <cache>: links to the notes of each release after <from> up to <to>, for GitHub sources
@@ -818,6 +847,7 @@ cmd_init() {
   : >"$tmp/plan"
   : >"$tmp/conflicts"
   : >"$tmp/asks"
+  : >"$tmp/taken.paths"
   while read -r pack mode sha path; do
     printf '%s\n' "$wanted" | grep -qx -- "$pack" || continue
     if is_ignored "$path" "$name"; then ignored=$((ignored + 1)); continue; fi
@@ -842,12 +872,25 @@ cmd_init() {
         echo "replace $mode $sha $path $giver" >>"$tmp/plan"
       else
         echo "taken    $path ($taken_file has this path; not installed)"
+        echo "$path" >>"$tmp/taken.paths"
         taken=$((taken + 1))
       fi
     else
       echo "install $mode $sha $path" >>"$tmp/plan"
     fi
   done <"$tmp/new.files"
+  pack_paths "$tmp/wanted" "$tmp/new.files" >"$tmp/kit.paths"
+  taken_skills "$tmp/kit.paths" "$tmp/taken.paths" "$tmp/lock.files" >"$tmp/taken.skills"
+  while read -r kind mode sha path owner; do
+    if [ "$kind" = install ] && in_taken_skill "$path"; then
+      taken_skill_note "$path"
+      taken=$((taken + 1))
+    else
+      echo "$kind $mode $sha $path $owner" >>"$tmp/plan.kept"
+    fi
+  done <"$tmp/plan"
+  : >>"$tmp/plan.kept"
+  mv "$tmp/plan.kept" "$tmp/plan"
   if [ -s "$tmp/conflicts" ]; then
     {
       echo "agd: $name ships paths that another source already installed here:"
@@ -888,7 +931,7 @@ cmd_init() {
   write_lock
 
   echo "Installed $name $(label "$v"): $(count "$added" file) from the packs $(echo $wanted)."
-  [ "$taken" = 0 ] || echo "$taken taken: $taken_files already use those paths, so agd left them alone."
+  [ "$taken" = 0 ] || echo "$taken taken: $taken_files already use those paths or their skill folders, so agd left them alone."
   [ "$ignored" = 0 ] || echo "$ignored ignored, as $ignore_file asks."
   case "$url" in /*) echo "The source is a local path, so $lock_file works only on this machine." ;; esac
   advise "Commit $lock_file along with the new files."
@@ -1002,6 +1045,7 @@ cmd_status() {
         edited-newer) echo "edited   $path, newer version available: see $agd diff $path, then $agd merge or $agd reset it"; due=1 ;;
         deleted) echo "deleted  $path (add it to $ignore_file to stop this notice)"; notice=1 ;;
         taken) echo "taken    $path ($taken_file has this path, so the kit's isn't installed)" ;;
+        skill-taken) taken_skill_note "$path" ;;
         outside) outside_note "$path" "$name"; notice=1 ;;
         gonepack) echo "pack     $path is gone from $name $(label "$now")" ;;
         newpack) echo "pack     $path is new in $name $(label "$now"): $agd add $path installs it" ;;
@@ -1080,6 +1124,7 @@ cmd_update() {
         orphan) echo "kept     $path (no longer in the kit, but it has your changes, so it is yours now)" ;;
         ignored) echo "ignored  $path (listed in $ignore_file: agd no longer manages it, and the file stays)" ;;
         taken) echo "taken    $path ($taken_file has this path, so the kit's isn't installed)" ;;
+        skill-taken) taken_skill_note "$path" ;;
         outside) outside_note "$path" "$name" ;;
         gonepack) echo "pack     $path is gone from $name $(label "$target")" ;;
         newpack) echo "pack     $path is new in $name $(label "$target"): $agd add $path installs it" ;;
@@ -1146,6 +1191,13 @@ cmd_add() {
   stop_outside_home_kit "$pack_source" "$tmp/pk.files" "$tmp/adding"
   awk -v s="$pack_source" '$1 == "file" && $2 == s { print $3 }' "$project/$lock_file" >"$tmp/have.files"
   lock_parts
+  pack_paths "$tmp/adding" "$tmp/pk.files" >"$tmp/kit.paths"
+  while read -r path; do
+    grep -qxF -- "$path" "$tmp/have.files" && continue
+    is_ignored "$path" "$pack_source" && continue
+    [ ! -e "$project/$path" ] || echo "$path"
+  done <"$tmp/kit.paths" >"$tmp/taken.paths"
+  taken_skills "$tmp/kit.paths" "$tmp/taken.paths" "$tmp/lock.files" >"$tmp/taken.skills"
   while read -r pack mode sha path; do
     grep -qx -- "$pack" "$tmp/adding" || continue
     grep -qxF -- "$path" "$tmp/have.files" && continue
@@ -1153,6 +1205,10 @@ cmd_add() {
     dst=$project/$path
     if [ -e "$dst" ]; then
       echo "taken    $path ($taken_file has this path, so the kit's isn't installed)"
+      continue
+    fi
+    if in_taken_skill "$path"; then
+      taken_skill_note "$path"
       continue
     fi
     mkdir -p "$(dirname "$dst")" && git -C "$pack_cache" cat-file blob "$sha" >"$dst" </dev/null || die "can't write $path"

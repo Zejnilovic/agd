@@ -41,7 +41,7 @@ flowchart LR
 - Source (kit source): a git repository holding a kit, with `kit/` (or the `root` named in `packs.txt`), `packs.txt` and release tags. Several sources can be installed in one project; a pack names another source's pack as `<source>:<pack>`.
 - Pack: a named set of kit paths in `packs.txt`, with `requires` on other packs. `min-agd` names the oldest agd that can install the source.
 - Project parts: what updates keep in a kit file: an agent's `model:` and `tools:` front-matter lines, and a closing `## This project` section of a Markdown file (`part()` and `compose()` in `bin/agd`).
-- Taken: a project file already at a kit path; `init` leaves it and doesn't install that file.
+- Taken: a project file already at a kit path; agd leaves it and doesn't install that file. In a kit folder with a `SKILL.md` that agd manages no file of, it installs none of the folder (`taken_skills`), so a project's skill and a kit's don't mix. Ignored files don't count, and a folder with a locked file stays file by file, so older installs keep updating.
 - Home rules: what changes when the target folder is `$HOME` (`at_home`). Other default source, installs only under `.claude/`, with plain ASCII names and never `.claude/settings*` (`home_allows`), and no `adopt`. A home kit is any kit that fits, once `.agd-ignore` applies; `packs.txt` has no marker for it. `docs/guides/home.md` has the reasons.
 
 ## Contracts

@@ -26,7 +26,7 @@ Installs a source in the project, and writes `.agd.lock`.
 - **`--with`** installs only the named packs, and the packs they require, without asking.
 - **`--yes`** installs every pack without asking, and replaces files without asking where `.agd-ignore` gives a path from one source to another. Without a terminal, agd installs every pack too.
 
-In a project that is already set up, `init <source>` adds another source. It stops when the new source ships a path another source installed; [choose one in `.agd-ignore`](../guides/combine-sources.md#when-two-sources-ship-the-same-path). Paths where the project already has its own file are skipped and listed as `taken`.
+In a project that is already set up, `init <source>` adds another source. It stops when the new source ships a path another source installed; [choose one in `.agd-ignore`](../guides/combine-sources.md#when-two-sources-ship-the-same-path). Paths where the project already has its own file are skipped and listed as `taken`, and so is the rest of a skill folder with such a file.
 
 agd stops, and writes nothing, when the packs it would install have no files, for example because the repository doesn't use the [source layout](../sources.md#the-layout).
 

@@ -76,6 +76,7 @@ For each file, agd compares three versions: what it installed (from the lock), w
 | Listed in `.agd-ignore` | Any | Stops managing it. The file stays. |
 | No file at that path | New file | Installs it, when its pack is installed. |
 | A project file at that path | New file | Leaves the project's file. The path is taken. |
+| No file at that path, but a project file in the same new skill folder | New file | Leaves it out. A skill folder installs whole or not at all. |
 
 agd only ever writes files listed in the lock, or new files at free paths. Files your project wrote itself are never touched. Line endings and trailing blank lines don't count as edits.
 

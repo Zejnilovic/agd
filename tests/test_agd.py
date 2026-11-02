@@ -1548,6 +1548,114 @@ class AgdMovedTagTest(AgdCase):
         self.assertEqual(self.lock_lines("commit"), [f"commit agentic-defaults {self.was}"])
 
 
+class AgdSkillFolderTest(AgdCase):
+    """A skill's files belong together: agd installs a kit's skill folder whole, or not at all."""
+
+    SKILL = ".claude/skills/implementation/SKILL.md"
+    HELPER = ".claude/skills/implementation/check.sh"
+
+    def locked(self, rel):
+        return [line for line in self.lock_lines("file") if f" {rel} " in line]
+
+    def assert_left_out(self, stdout, rel):
+        self.assertRegex(stdout, rf"taken\s+{re.escape(rel)} ")
+        self.assertFalse(self.locked(rel))
+
+    def test_init_leaves_out_the_folder_when_the_project_has_its_skill_file(self):
+        self.release("1.0.0")
+        write(self.project, self.SKILL, "Our own skill.\n")
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.project / self.SKILL).read_text(), "Our own skill.\n")
+        self.assertFalse((self.project / self.HELPER).exists())
+        self.assert_left_out(result.stdout, self.SKILL)
+        self.assert_left_out(result.stdout, self.HELPER)
+        self.assertIn("2 taken", result.stdout)
+        self.assertTrue((self.project / ".claude/skills/flask/SKILL.md").is_file())
+
+    def test_init_leaves_out_the_folder_when_the_project_has_another_of_its_files(self):
+        self.release("1.0.0")
+        write(self.project, self.HELPER, "Our own script.\n")
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.project / self.SKILL).exists())
+        self.assert_left_out(result.stdout, self.SKILL)
+
+    def test_init_writes_nothing_through_a_linked_skill_folder(self):
+        self.release("1.0.0")
+        write(self.project, ".agents/skills/implementation/SKILL.md", "From another tool.\n")
+        (self.project / ".claude/skills").mkdir(parents=True)
+        (self.project / ".claude/skills/implementation").symlink_to("../../.agents/skills/implementation")
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([p.name for p in (self.project / ".agents/skills/implementation").iterdir()], ["SKILL.md"])
+        self.assertEqual((self.project / self.SKILL).read_text(), "From another tool.\n")
+
+    def test_an_ignored_file_leaves_the_rest_of_the_folder_installing(self):
+        self.release("1.0.0")
+        write(self.project, self.SKILL, "Our own skill.\n")
+        write(self.project, ".agd-ignore", f"{self.SKILL}\n")
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.project / self.HELPER).is_file())
+        self.assertTrue(self.locked(self.HELPER))
+
+    def test_a_project_file_in_a_folder_without_a_skill_stays_one_path(self):
+        self.release("1.0.0", {".claude/notes/a.md": "A.\n", ".claude/notes/b.md": "B.\n"},
+                     packs=self.PACKS + "\npack notes\n  .claude/notes/\n")
+        write(self.project, ".claude/notes/a.md", "Ours.\n")
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.project / ".claude/notes/b.md").is_file())
+
+    def test_update_keeps_a_taken_folder_out(self):
+        self.release("1.0.0")
+        write(self.project, self.SKILL, "Our own skill.\n")
+        self.assertEqual(self.agd("init").returncode, 0)
+        self.release("1.1.0", {".claude/skills/implementation/reference.md": "Reference.\n"})
+        status = self.agd("status")
+        self.assertNotRegex(status.stdout, r"new\s+\S*skills/implementation/")
+        self.assertRegex(status.stdout, rf"taken\s+{re.escape(self.HELPER)} ")
+        result = self.agd("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.project / self.SKILL).read_text(), "Our own skill.\n")
+        self.assertEqual(sorted(p.name for p in (self.project / self.SKILL).parent.iterdir()), ["SKILL.md"])
+        self.assert_left_out(result.stdout, self.HELPER)
+
+    def test_update_leaves_out_a_new_skill_the_project_already_has(self):
+        self.release("1.0.0")
+        self.assertEqual(self.agd("init").returncode, 0)
+        write(self.project, ".claude/skills/vue/SKILL.md", "Our own Vue skill.\n")
+        self.release("1.1.0", {".claude/skills/vue/SKILL.md": "Kit Vue.\n", ".claude/skills/vue/reference.md": "Reference.\n"},
+                     packs=self.PACKS.replace("  CLAUDE.md\n", "  CLAUDE.md\n  .claude/skills/vue/\n"))
+        result = self.agd("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.project / ".claude/skills/vue/reference.md").exists())
+        self.assert_left_out(result.stdout, ".claude/skills/vue/reference.md")
+
+    def test_a_folder_agd_already_manages_part_of_keeps_updating(self):
+        self.release("1.0.0")
+        self.assertEqual(self.agd("init").returncode, 0)
+        lock = self.project / ".agd.lock"
+        lock.write_text("".join(line for line in lock.read_text().splitlines(True) if f" {self.SKILL} " not in line))
+        write(self.project, self.SKILL, "Our own skill.\n")
+        self.release("1.1.0", {self.HELPER: "#!/usr/bin/env bash\necho new\n"})
+        result = self.agd("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, rf"updated\s+{re.escape(self.HELPER)}")
+        self.assertIn("echo new", (self.project / self.HELPER).read_text())
+
+    def test_add_leaves_out_the_folder_when_the_project_has_its_skill_file(self):
+        self.release("1.0.0", {".claude/skills/flask/reference.md": "Reference.\n"})
+        self.assertEqual(self.agd("init", "--with", "react").returncode, 0)
+        write(self.project, ".claude/skills/flask/SKILL.md", "Our flask notes.\n")
+        result = self.agd("add", "flask")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.project / ".claude/skills/flask/reference.md").exists())
+        self.assert_left_out(result.stdout, ".claude/skills/flask/reference.md")
+        self.assertTrue((self.project / ".claude/agents/flask-developer.md").is_file())
+
+
 class AgdCheckTest(AgdCase):
     """agd check: validates a source's working tree before a release."""
 
