@@ -51,6 +51,35 @@ agd update --to 3f2c1ab        # a commit, for example to try a change before it
 
 With several sources, name the one to move, such as `agd update --to team-kit@1.3.0`; the others stay as they are. A project installed at a commit moves to the latest release with a plain `agd update`.
 
+`--to` takes a release or a commit SHA, not a branch name.
+
+## Follow a source without releases
+
+Some teams don't tag releases, and work from the newest commit. `--latest` takes the newest commit on the source's default branch:
+
+```bash
+agd init your-org/team-skills --latest
+```
+
+```bash
+agd update --latest
+```
+
+With several sources, name the one to move, such as `agd update --latest team-skills`. The lock records the commit's SHA, so a project stays on what it has reviewed, and everyone who clones it gets the same files.
+
+A plain `agd update` doesn't follow the branch, but it and `agd status` tell you when the branch has moved on:
+
+```console
+$ agd status
+team-skills is installed at commit 351ef5d, and it has no releases.
+team-skills: the newest commit on its default branch is commit bdc9d7d, and agd update --latest moves to it.
+Nothing to do.
+```
+
+`agd status --check` doesn't count this as an update that's due, so a scheduled job should run `agd update --latest` and look at the changes.
+
+Once the source tags a release, a plain `agd update` moves to that release, which may be older than the commit you have.
+
 ## When a release changes after you installed it
 
 A source can move a release's tag to another commit, so `1.2.0` would no longer be the release you reviewed. `.agd.lock` records the commit behind each installed release, and `status`, `update`, `add`, `remove`, `diff`, `merge` and `reset` stop when the tag no longer points at it. They print both commits and the change to your installed files, and write nothing:

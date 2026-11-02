@@ -46,6 +46,7 @@ flowchart LR
 
 ## Contracts
 
+- `--latest` (`tip_commit`): the newest commit on the source's default branch, recorded as a commit install, so it needs no new lock line and no tracking state. `refresh` doesn't move a bare clone's `HEAD`, so `tip_commit` asks the source with `git ls-remote --symref`, unless `--offline`, to follow a renamed default branch. Not supporting the skills.sh layout (`skills/<name>/`) is a decision: such repositories get rewritten as sources (`docs/guides/from-skills-sh.md`).
 - `.agd.lock`: line format `agd-lock 1`, then `source <name> <url> <version>`, `commit <source> <sha>` (the commit behind an installed release's tag, none for a commit install), `pack <source> <pack>`, `file <source> <path> <blob>` lines. Written only by `write_lock()`. Readers pick lines by their first word, so older agd reads newer lines and drops them on rewrite.
 - `.agd-ignore` (and the older `.agentic-defaults-ignore`): paths agd must not install or update.
 - Source layout and `packs.txt` syntax.

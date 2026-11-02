@@ -8,6 +8,8 @@ A bullet can end with the issues it touches: `(#12)` means this release fixes #1
 
 ## 0.5.1 (unreleased)
 
+- `--latest` is for sources that don't tag releases. `agd init --latest`, `agd adopt --latest` and `agd update --latest` take the newest commit on the source's default branch, and record its SHA in `.agd.lock`. With several sources, name the one to move: `agd update --latest team-kit`. A plain `agd update` doesn't follow the branch; `status` and `update` say when it has moved on. `agd check --latest` doesn't require a release tag.
+- A new guide, [Move from skills.sh](https://zejnilovic.github.io/agd/guides/from-skills-sh/), rewrites a skills.sh repository as a kit source and moves projects over. The FAQ compares agd with similar tools.
 - `agd init` stops when the packs it would install have no files, instead of reporting "Installed ... 0 files" and writing a lock. A repository in another layout, such as `skills/<name>/SKILL.md`, used to get that success message. A release whose files are all ignored or taken still installs, as before.
 - `agd check` reports the same case as an error: no pack lists a file.
 - A kit's skill folder installs whole or not at all. When a project already has a file in it, `init`, `add` and `update` report every file of the folder as `taken` and install none, so a project's skill and a kit's no longer mix, and agd no longer writes through a linked skill folder. An ignored file doesn't count, and a folder agd already manages part of keeps updating file by file.

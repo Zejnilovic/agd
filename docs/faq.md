@@ -20,8 +20,45 @@ Mostly. Cursor reads the folders agentic-defaults installs, but not every line i
 Partly. Both use `SKILL.md` files and `.claude/skills/`, but they find, install and update skills differently:
 
 - **Installing a kit's skills with the [skills CLI](https://github.com/vercel-labs/skills).** Its search should find skills under `kit/.claude/skills/`, so `npx skills add <owner>/<kit>` can take them. You get only the skills, not the kit's `AGENTS.md` or agents, and agd doesn't track or update them.
-- **Installing a skills.sh repository with agd.** Most keep their skills in `skills/<name>/`, without `packs.txt` or `v1.2.3` tags. agd copies paths as they are, so `skills/` wouldn't reach `.claude/skills/`. The repository needs the [source layout](sources.md#the-layout): the skills under `.claude/skills/` in its kit, listed in a pack, with a release tag or a commit to install.
+- **Installing a skills.sh repository with agd.** Most keep their skills in `skills/<name>/`, and agd doesn't read that layout. Rewrite the repository as a source: [Move from skills.sh](guides/from-skills-sh.md) has the steps, and how to move projects over. It doesn't need release tags; projects can [follow its newest commit](guides/updates.md#follow-a-source-without-releases).
 - **Using both in one project.** It works, but keep each skill with one tool. When the skills CLI already installed a skill with the same folder name, agd reports that folder's files as `taken` and installs none of them, so it doesn't mix the two.
+
+## How does agd compare with similar tools?
+
+Several tools share or distribute agent setups, and they solve different problems. This table comes from each project's own README, as of November 2026, and these tools change quickly, so check them yourself:
+
+| Tool | What it does | From git repositories | Lockfile | Runs on |
+|---|---|---|---|---|
+| agd | Installs kits as ordinary repository files, and updates them without overwriting a project's changes | Any | `.agd.lock` | bash and git |
+| [APM](https://github.com/microsoft/apm) | Dependency manager for instructions, skills, prompts, agents, hooks, plugins and MCP servers | Any | `apm.lock.yaml` | Python, or native binaries |
+| [AGPM](https://docs.rs/crate/agpm-cli) | Git-based package manager for agents, snippets, commands, scripts, hooks and MCP servers | Any | `agpm.lock` | Rust, or prebuilt binaries |
+| [skills CLI](https://github.com/vercel-labs/skills) | Installs skills only, and feeds the [skills.sh](https://www.skills.sh/) directory | GitHub sources | `skills-lock.json` | Node.js |
+| [ai-rulez](https://github.com/Goldziher/ai-rulez) | Generates and validates rules, skills, agents and MCP configuration for many assistants | Can reuse git content | `ai-rulez.lock` | Go |
+| [rulesync](https://github.com/dyoshikawa/rulesync) | Generates each tool's configuration from one set of rules | Fetches skills | Not stated | Node.js |
+| [Ruler](https://github.com/intellectronica/ruler) | Distributes one set of instructions to each agent's files | Not stated | Not stated | Node.js |
+
+APM and AGPM are the closest to agd: they also treat an agent setup as versioned dependencies. Consider one of them if you want to manage MCP servers as dependencies, or a generator such as ai-rulez, rulesync or Ruler if you use several assistants and want one source written in each one's format. agd copies files and doesn't convert them.
+
+### What agd does extra
+
+agd is built for a setup that a team shares and each project also changes. That's where it goes further than the closest tools. This table reflects what their docs say, as of November 2026:
+
+| | agd | APM | AGPM | skills CLI |
+|---|---|---|---|---|
+| You edited an installed file, and an update changes it | Keeps your file, and tells you | Keeps edited skill files unless you pass `--force`; can replace other files, and `apm audit` reports the change | Not documented | Not documented |
+| Merge the update into your edited file | [`agd merge`](guides/your-changes.md#settle-an-edited-file) | Not documented | Not documented | Not documented |
+| Built-in places for project changes | An agent's `model:` and `tools:` lines, and a `## This project` section, all kept across updates | Not documented | Patches to an agent's fields, in `agpm.toml` | Not documented |
+| Installed files | Committed, as ordinary repository files | Lockfile committed, `apm_modules/` ignored | `.claude/` ignored by default | Committed |
+| What it needs | bash and git | Python, or native binaries | Rust, or prebuilt binaries | Node.js |
+
+So with agd:
+
+- **You can change what you install and still get updates.** `agd status` lists your edits, `agd diff` shows your change and the source's, and `agd merge` combines them. Your own files are never touched, even when a release ships a file at the same path.
+- **Reviews see everything.** Installed files are ordinary files in your repository, so a change to an agent's instructions shows up in `git diff` and in the pull request, like any other code.
+- **There's almost nothing to install.** agd is one bash script that needs only git, on Linux, macOS and Git Bash on Windows. It never runs code from a source.
+- **Sources can build on each other.** A team's kit can sit on top of another source and [require its packs](guides/combine-sources.md), and agd stops when two sources ship the same path, until you choose one.
+
+"Not documented" means we didn't find it in that tool's docs, not that it can't be done. The other tools do things agd doesn't: APM, for example, manages MCP servers and reports moved tags with `apm outdated`.
 
 ## Does agd run code from a source?
 
@@ -88,7 +125,7 @@ agd's messages say what to do next. The common ones:
 | `no files to install from ...` | The repository doesn't use the [source layout](sources.md#the-layout), or the packs you chose list no files. |
 | `release ... needs agd ... or newer` | The source needs a newer agd. [Update agd](install.md). |
 | `can't fetch ...` | Check the URL and your network or credentials, or work from the cache with `--offline`. |
-| `... has no releases (tags like v1.2.3)` | The source has no release tags yet. Install a commit, `<source>@<sha>`, or ask its maintainers to tag a release. |
+| `... has no releases (tags like v1.2.3)` | The source has no release tags yet. Take its [newest commit](guides/updates.md#follow-a-source-without-releases) with `--latest`, install a commit, `<source>@<sha>`, or ask its maintainers to tag a release. |
 | `... ships paths that another source already installed here` | Choose one source for each path in `.agd-ignore`. See [Combine sources](guides/combine-sources.md#when-two-sources-ship-the-same-path). |
 | `... confirm in a terminal, or run it with --yes` | agd asks before it replaces or resets files. Run it in a terminal, or pass `--yes`. |
 

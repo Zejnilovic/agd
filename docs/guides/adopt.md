@@ -32,3 +32,5 @@ Then commit `.agd.lock`, and look at `agd status`. Files that differ from the re
 ```bash
 agd adopt your-org/team-kit@1.2.0
 ```
+
+A source without releases takes a commit, `your-org/team-kit@<sha>`, or the newest one with `--latest`. To move from the skills CLI, see [Move from skills.sh](from-skills-sh.md).

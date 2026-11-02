@@ -3,19 +3,21 @@
 # Works with bash 3.2 (macOS) and Git Bash (Windows), and needs only git and POSIX tools.
 #
 # Usage: agd [-C <dir> | --home] [--offline] <command>
-#   init [<source>][@<version>|@<commit>] [--with <pack>,...] [--yes]
+#   init [<source>][@<version>|@<commit>] [--latest] [--with <pack>,...] [--yes]
 #                             install the latest release of agentic-defaults, or of <source>: a
 #                             GitHub owner/repo, a git URL or a local folder. @ picks a release or a
-#                             commit. In a terminal, asks which packs (in fzf when it is installed);
-#                             --with installs only the named packs, --yes or no terminal every pack.
-#                             Packs come with the packs they require
-#   adopt [<source>][@<version>]
+#                             commit; --latest the newest commit on the default branch, for a source
+#                             that doesn't tag releases. In a terminal, asks which packs (in fzf when it
+#                             is installed); --with installs only the named packs, --yes or no terminal
+#                             every pack. Packs come with the packs they require
+#   adopt [<source>][@<version>|@<commit>] [--latest]
 #                             start managing a copy made by hand or by scripts/sync.sh, without
 #                             changing a file; the version comes from AGENTS.md unless given
 #   status [--check]          show what agd update would do; --check exits 1 when an update is due
-#   update [--to [<source>@]<version>|<commit>]
-#                             update to the latest release, or to the given release or commit; with
-#                             several sources, --to names the one to move, and the others stay as they are
+#   update [--to [<source>@]<version>|<commit> | --latest [<source>]]
+#                             update to the latest release, to the given release or commit, or with
+#                             --latest to the newest commit on the default branch; with several sources,
+#                             --to and --latest name the one to move, and the others stay as they are
 #   add <pack>                install a pack, and the packs it requires, from the installed release
 #   remove <pack>             remove a pack; files you changed stay, as yours
 #   diff <path>               show your changes to a kit file, and the kit's changes since it was installed
@@ -24,8 +26,10 @@
 #                             the "This project" section of AGENTS.md; asks first, unless --yes
 #   source list               list the sources here, with their versions and packs
 #   source remove <name>      remove a source; files you changed stay, as yours
-#   check [<folder>]          check a source before you release it: its packs.txt, paths, packs and
-#                             release tags, in the working tree; exits 1 on an error. Writes nothing
+#   check [<folder>] [--latest]
+#                             check a source before you release it: its packs.txt, paths, packs and
+#                             release tags, in the working tree; exits 1 on an error. Writes nothing.
+#                             --latest doesn't require a tag, for a source projects install with --latest
 #   uninstall [--yes]         remove every source, its unchanged files and .agd.lock; asks whether to
 #                             delete each file you changed. --yes keeps them, as yours
 #   feedback [<note>]         report a problem with kit files to the source that owns them: opens a
@@ -61,7 +65,7 @@ usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' 
 die() { echo "agd: $*" >&2; exit 2; }
 count() { if [ "$1" = 1 ]; then echo "1 $2"; else echo "$1 $2s"; fi; }
 
-dir=. named_dir=0 home=0 offline=0 command="" arg="" arg2="" with="" to="" check=0 yes=0
+dir=. named_dir=0 home=0 offline=0 command="" arg="" arg2="" with="" to="" to_latest=0 check=0 yes=0
 # agd __complete, run by the completion scripts, reads its words in cmd_complete.
 [ "${1:-}" != __complete ] || command=__complete
 while [ "$command" != __complete ] && [ $# -gt 0 ]; do
@@ -73,6 +77,7 @@ while [ "$command" != __complete ] && [ $# -gt 0 ]; do
     --with=*) with=${1#--with=} ;;
     --to) [ $# -ge 2 ] || die "--to needs a version, for example --to 0.4.0"; to=$2; shift ;;
     --to=*) to=${1#--to=} ;;
+    --latest) to_latest=1 ;;
     --check) check=1 ;;
     --yes) yes=1 ;;
     --version) echo "agd $version"; exit 0 ;;
@@ -91,6 +96,7 @@ case "$command" in
   diff|merge) [ -n "$arg" ] || die "agd $command needs a path, for example agd $command .claude/agents/reviewer.md" ;;
   add|remove) [ -n "$arg" ] || die "agd $command needs a pack, for example agd $command flask" ;;
   init|reset|adopt|feedback|completion|check|__complete) ;;
+  update) [ -z "$arg" ] || [ "$to_latest" = 1 ] || die "unexpected argument $arg (see agd --help)" ;;
   source)
     case "$arg" in
       list) [ -z "$arg2" ] || die "unexpected argument $arg2 (see agd --help)" ;;
@@ -116,6 +122,9 @@ fi
 cache_root=${AGD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/agd}
 [ -z "$with" ] || [ "$command" = init ] || die "--with works only with init"
 [ -z "$to" ] || [ "$command" = update ] || die "--to works only with update"
+[ "$to_latest" = 0 ] || [ "$command" = init ] || [ "$command" = adopt ] || [ "$command" = update ] || [ "$command" = check ] \
+  || die "--latest works only with init, adopt, update and check"
+[ -z "$to" ] || [ "$to_latest" = 0 ] || die "--to and --latest both name where to go: use one"
 [ "$check" = 0 ] || [ "$command" = status ] || die "--check works only with status"
 [ "$yes" = 0 ] || [ "$command" = reset ] || [ "$command" = init ] || [ "$command" = uninstall ] ||
   die "--yes works only with init, reset and uninstall"
@@ -146,6 +155,23 @@ releases() { # <cache>: every release, oldest first, without the v
   git -C "$1" tag -l 'v*' | sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' | sort -t. -k1,1n -k2,2n -k3,3n
 }
 latest() { releases "$1" | tail -1; }
+
+tip_commit() { # <url> <cache>: the newest commit on the default branch. Fetched refs don't move HEAD, so asks the source.
+  local head
+  if [ "$offline" = 0 ]; then
+    head=$(git ls-remote --symref "$1" HEAD </dev/null 2>/dev/null | awk '$1 == "ref:" { print $2; exit }')
+    [ -z "$head" ] || git -C "$2" symbolic-ref HEAD "$head" </dev/null 2>/dev/null
+  fi
+  git -C "$2" rev-parse -q --verify 'HEAD^{commit}' </dev/null
+}
+
+latest_note() { # <name> <url> <cache> <installed commit>: says so when the default branch has moved on
+  local tip how="$agd update --latest"
+  tip=$(tip_commit "$2" "$3") || return 0
+  [ "$tip" != "$4" ] || return 0
+  [ "$(grep -c '^source ' "$project/$lock_file")" -le 1 ] || how="$how $1"
+  echo "$1: the newest commit on its default branch is $(label "$tip"), and $how moves to it."
+}
 
 # A source is installed at a release (a version such as 1.2.0, read from the tag v1.2.0) or at a commit
 # (its full SHA in the lock).
@@ -632,6 +658,7 @@ parse_spec() { # <spec>: sets spec_name, spec_url and spec_ref
         spec_ref=${spec##*@} spec=${spec%@*}
       fi ;;
   esac
+  [ -z "$spec_ref" ] || [ "$to_latest" = 0 ] || die "@$spec_ref and --latest both name what to install: use one"
   if [ -n "$spec" ]; then
     set -- $(resolve_source "$spec")
     [ $# = 2 ] || exit 2
@@ -647,11 +674,16 @@ cmd_adopt() {
   [ ! -f "$project/$lock_file" ] || die "$project is already set up with agd: see agd status"
   local name url ref cache v wanted pack mode sha path dst locked=0 differ=0 missing=0
   parse_spec "$arg"
-  name=$spec_name url=$spec_url ref=${spec_ref:-$(copied_version)}
-  [ -n "$ref" ] || die "AGENTS.md doesn't say which release of $name this copy came from: run agd adopt @<version>"
+  name=$spec_name url=$spec_url ref=$spec_ref
+  [ "$to_latest" = 1 ] || ref=${ref:-$(copied_version)}
+  [ -n "$ref" ] || [ "$to_latest" = 1 ] || die "AGENTS.md doesn't say which release of $name this copy came from: run agd adopt @<version>"
   cache=$(cache_of "$url")
   refresh "$url" "$cache"
-  v=$(resolve_ref "$url" "$cache" "$ref") || exit 2
+  if [ "$to_latest" = 1 ]; then
+    v=$(tip_commit "$url" "$cache") || die "$url has no commits on its default branch"
+  else
+    v=$(resolve_ref "$url" "$cache" "$ref") || exit 2
+  fi
   load "$cache" "$v" new
 
   # Packs: every pack with a file here, and the packs they require.
@@ -805,11 +837,13 @@ cmd_init() {
 
   cache=$(cache_of "$url")
   refresh "$url" "$cache"
-  if [ -n "$ref" ]; then
+  if [ "$to_latest" = 1 ]; then
+    v=$(tip_commit "$url" "$cache") || die "$url has no commits on its default branch"
+  elif [ -n "$ref" ]; then
     v=$(resolve_ref "$url" "$cache" "$ref") || exit 2
   else
     v=$(latest "$cache")
-    [ -n "$v" ] || die "$url has no releases (tags like v1.2.3): name a commit with $url@<sha>"
+    [ -n "$v" ] || die "$url has no releases (tags like v1.2.3): name a commit with $url@<sha>, or take the newest with --latest"
   fi
   load "$cache" "$v" new
 
@@ -1024,6 +1058,7 @@ cmd_status() {
       due=1
     elif is_commit "$v"; then
       echo "$name is installed at $(label "$v"), and it has no releases."
+      latest_note "$name" "$url" "$cache" "$v"
       now=$v
     elif [ -n "$now" ] && newer "$now" "$v"; then
       echo "$name $v is installed, and $now is available: run $agd update."
@@ -1064,6 +1099,15 @@ cmd_update() {
   need_lock
   local name url v cache target kind path a b c dst updated added removed only=""
   sources >"$tmp/sources"
+  if [ "$to_latest" = 1 ]; then
+    only=$arg
+    if [ -n "$only" ]; then
+      [ -n "$(source_line "$only")" ] || die "no source named $only here: see $agd source list"
+    else
+      [ "$(grep -c . "$tmp/sources")" -le 1 ] \
+        || die "this project has several sources: name the one to move, for example --latest $(tail -1 "$tmp/sources" | cut -d' ' -f1)"
+    fi
+  fi
   case "$to" in
     "") ;;
     *@*)
@@ -1086,7 +1130,9 @@ cmd_update() {
     updated=0 added=0 removed=0
     cache=$(cache_of "$url")
     refresh "$url" "$cache"
-    if [ -n "$to" ]; then
+    if [ "$to_latest" = 1 ]; then
+      target=$(tip_commit "$url" "$cache") || die "$url has no commits on its default branch"
+    elif [ -n "$to" ]; then
       target=$(resolve_ref "$url" "$cache" "$to") || exit 2
       # Naming the release accepts its tag as it is now, even if it moved.
       is_commit "$target" || echo "$name $(tag_commit "$cache" "$target")" >>"$tmp/accepted"
@@ -1134,6 +1180,7 @@ cmd_update() {
     echo "source $name $url $target" >>"$tmp/lock.sources"
     sed "s/^/pack $name /" "$tmp/selected" >>"$tmp/lock.packs"
     echo "$name is at $(label "$target"): $updated updated, $added added, $removed removed."
+    if [ "$to_latest" = 0 ] && [ -z "$to" ] && is_commit "$target"; then latest_note "$name" "$url" "$cache" "$target"; fi
   done <"$tmp/sources"
   write_lock
   advise "Review the changes with git diff, and commit $lock_file with them."
@@ -1480,7 +1527,7 @@ cmd_check() {
       || echo "warning  $path: ## This project is the project's, so updates won't change what is under it"
   done >>"$tmp/problems"
   # Releases and min-agd.
-  [ -n "$(releases "$top")" ] \
+  [ -n "$(releases "$top")" ] || [ "$to_latest" = 1 ] \
     || echo "error    no release tag yet: tag one as v<major.minor.patch>, for example git tag v0.1.0" >>"$tmp/problems"
   set -- $(awk '$1 == "min" { print $2, $3; exit }' "$tmp/c.packs")
   if [ $# = 2 ] && newer "$1" "$version"; then
@@ -1863,6 +1910,7 @@ cmd_complete() { # <word>... <word at the cursor>
         -C|--with|--to) want=$1 ;;
         --home) dir=${HOME:-$dir} ;;
         --offline) offline=1 ;;
+        --latest) to_latest=1 ;;
         -*) ;;
         *) if [ -z "$cmd" ]; then cmd=$1; else n=$((n + 1)); [ "$n" != 1 ] || first=$1; fi ;;
       esac
@@ -1891,9 +1939,11 @@ cmd_complete() { # <word>... <word at the cursor>
     -*)
       case "$cmd" in
         "") echo -C --home --offline --version --help ;;
-        init) echo -C --home --offline --with --yes ;;
+        init) echo -C --home --offline --latest --with --yes ;;
+        adopt) echo -C --offline --latest ;;
+        check) echo -C --home --offline --latest ;;
         status) echo --home --offline --check ;;
-        update) echo -C --home --offline --to ;;
+        update) echo -C --home --offline --to --latest ;;
         reset|uninstall) echo -C --home --offline --yes ;;
         *) echo -C --home --offline ;;
       esac | tr ' ' '\n'
@@ -1908,6 +1958,7 @@ cmd_complete() { # <word>... <word at the cursor>
           live_releases "$url" | sed "s#^#${cur%%@*}@#" ;;
         *) echo :dirs ;;
       esac ;;
+    update:0) [ "$to_latest" = 0 ] || [ ! -f "$project/$lock_file" ] || awk '$1 == "source" { print $2 }' "$project/$lock_file" ;;
     add:0) complete_packs available "$cur" ;;
     remove:0) complete_packs installed "$cur" ;;
     diff:0|merge:0|reset:0) [ ! -f "$project/$lock_file" ] || awk '$1 == "file" { print $3 }' "$project/$lock_file" ;;

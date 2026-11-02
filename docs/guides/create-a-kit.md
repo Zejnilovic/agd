@@ -130,6 +130,8 @@ agd init your-org/team-kit
 
 For each later release, add a new tag and write release notes, including any manual steps a project needs. Never move a tag: projects that installed it stop until they accept the change.
 
+If your team doesn't tag releases, projects can [follow your newest commit](updates.md#follow-a-source-without-releases) with `--latest`, and `agd check --latest` checks the kit without asking for a tag.
+
 ## A kit for the home folder
 
 A home kit applies to every project on a person's machine, installed with `agd --home init your-org/team-home`. Build it the same way, with a few differences:

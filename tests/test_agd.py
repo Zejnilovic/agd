@@ -1548,6 +1548,162 @@ class AgdMovedTagTest(AgdCase):
         self.assertEqual(self.lock_lines("commit"), [f"commit agentic-defaults {self.was}"])
 
 
+class AgdLatestTest(AgdCase):
+    """--latest: for sources that don't tag releases, the newest commit on the default branch."""
+
+    DEV = ".claude/agents/developer.md"
+
+    def commit(self, text=None, repo=None):
+        """Commits KIT, without a tag, with text as the developer agent's rules. Prints its full SHA."""
+        repo = repo or self.source
+        for rel, kit in self.KIT.items():
+            write(repo, f"kit/{rel}", kit)
+        write(repo, "packs.txt", self.PACKS)
+        if text:
+            write(repo, f"kit/{self.DEV}", self.KIT[self.DEV].replace("Developer rules.", text))
+        write(repo, "stamp", f"{text}\n")
+        run(["git", "add", "-A"], repo)
+        self.assertEqual(run(["git", "commit", "-q", "-m", text or "first"], repo).returncode, 0)
+        return run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+
+    def other_source(self):
+        repo = pathlib.Path(self._tmp.name) / "team-kit"
+        repo.mkdir()
+        run(["git", "init", "-q", "-b", "main"], repo)
+        write(repo, "kit/.claude/agents/team.md", "---\nname: team\ndescription: Team.\nmodel: sonnet\n---\n\nFirst.\n")
+        run(["git", "add", "-A"], repo)
+        run(["git", "commit", "-q", "-m", "first"], repo)
+        return repo
+
+    def test_init_installs_the_newest_commit_of_a_source_without_releases(self):
+        self.commit("Old rules.")
+        sha = self.commit("New rules.")
+        result = self.agd("init", "--latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("New rules.", (self.project / self.DEV).read_text())
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} {sha}"])
+        self.assertIn(f"commit {sha[:7]}", result.stdout)
+
+    def test_init_without_releases_names_latest(self):
+        self.commit()
+        result = self.agd("init")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--latest", result.stderr)
+
+    def test_latest_goes_past_the_newest_release(self):
+        self.release("1.0.0")
+        sha = self.commit("After the release.")
+        result = self.agd("init", "--latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} {sha}"])
+
+    def test_update_moves_to_the_newest_commit_and_keeps_edits(self):
+        self.commit()
+        self.assertEqual(self.agd("init", "--latest").returncode, 0)
+        write(self.project, "CLAUDE.md", "Ours.\n")
+        self.KIT = {**self.KIT, "CLAUDE.md": "@AGENTS.md\nNew.\n"}
+        sha = self.commit("New rules.")
+        result = self.agd("update", "--latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, rf"updated\s+{re.escape(self.DEV)}")
+        self.assertIn("New rules.", (self.project / self.DEV).read_text())
+        self.assertRegex(result.stdout, r"edited\s+CLAUDE\.md")
+        self.assertEqual((self.project / "CLAUDE.md").read_text(), "Ours.\n")
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} {sha}"])
+
+    def test_plain_update_and_status_stay_put_and_point_at_latest(self):
+        sha = self.commit()
+        self.assertEqual(self.agd("init", "--latest").returncode, 0)
+        self.commit("New rules.")
+        for command in (("status",), ("update",)):
+            result = self.agd(*command)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("agd update --latest", result.stdout)
+        self.assertEqual(self.agd("status", "--check").returncode, 0)
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} {sha}"])
+        self.assertNotIn("New rules.", (self.project / self.DEV).read_text())
+
+    def test_no_pointer_at_latest_when_at_the_newest_commit(self):
+        self.commit()
+        self.assertEqual(self.agd("init", "--latest").returncode, 0)
+        self.assertNotIn("--latest", self.agd("status").stdout + self.agd("update").stdout)
+
+    def test_several_sources_need_a_name_and_only_that_one_moves(self):
+        self.release("1.0.0")
+        team = self.other_source()
+        self.assertEqual(self.agd("init").returncode, 0)
+        self.assertEqual(self.agd("init", str(team), "--latest").returncode, 0)
+        write(team, "kit/.claude/agents/team.md", "---\nname: team\ndescription: Team.\nmodel: sonnet\n---\n\nSecond.\n")
+        run(["git", "add", "-A"], team)
+        run(["git", "commit", "-q", "-m", "second"], team)
+        self.commit("After the release.")
+        before = (self.project / ".agd.lock").read_text()
+        result = self.agd("update", "--latest")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--latest team-kit", result.stderr)
+        self.assertEqual((self.project / ".agd.lock").read_text(), before)
+        result = self.agd("update", "--latest", "team-kit")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Second.", (self.project / ".claude/agents/team.md").read_text())
+        self.assertIn(f"source agentic-defaults {self.source} 1.0.0", self.lock_lines("source"))
+        self.assertEqual(self.agd("update", "--latest", "nope").returncode, 2)
+
+    def test_it_follows_a_renamed_default_branch(self):
+        self.commit()
+        self.assertEqual(self.agd("init", "--latest").returncode, 0)
+        run(["git", "branch", "-m", "main", "trunk"], self.source)
+        sha = self.commit("On the new branch.")
+        result = self.agd("update", "--latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} {sha}"])
+
+    def test_offline_uses_the_newest_commit_in_the_cache(self):
+        sha = self.commit()
+        self.assertEqual(self.agd("init", "--latest").returncode, 0)
+        self.commit("Not fetched.")
+        result = self.agd("--offline", "update", "--latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} {sha}"])
+
+    def test_adopt_records_the_newest_commit(self):
+        sha = self.commit()
+        write(self.project, self.DEV, self.KIT[self.DEV])
+        result = self.agd("adopt", "--latest")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lock_lines("source"), [f"source agentic-defaults {self.source} {sha}"])
+
+    def test_it_refuses_what_contradicts_it(self):
+        sha = self.commit()
+        cases = {("init", f"{self.source}@{sha}", "--latest"): "@",
+                 ("adopt", f"{self.source}@{sha}", "--latest"): "@",
+                 ("update", "--latest", "--to", sha): "--to",
+                 ("status", "--latest"): "--latest works only",
+                 ("add", "core", "--latest"): "--latest works only"}
+        for args, message in cases.items():
+            with self.subTest(args):
+                result = self.agd(*args)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn(message, result.stderr)
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_update_takes_a_source_name_only_with_latest(self):
+        self.commit()
+        self.assertEqual(self.agd("init", "--latest").returncode, 0)
+        self.assertEqual(self.agd("update", "agentic-defaults").returncode, 2)
+        self.assertEqual(self.agd("update", "--latest", "agentic-defaults").returncode, 0)
+
+    def test_completion_offers_it(self):
+        self.commit()
+        self.assertEqual(self.agd("init", "--latest").returncode, 0)
+        def complete(*words):
+            return subprocess.run([BASH, str(AGD), "__complete", *words], cwd=self.project, env=self.env,
+                                  stdin=subprocess.DEVNULL, capture_output=True, text=True).stdout.split()
+        for words in (("init", "--"), ("adopt", "--"), ("update", "--")):
+            self.assertIn("--latest", complete(*words), words)
+        self.assertIn("agentic-defaults", complete("update", "--latest", ""))
+        self.assertNotIn("agentic-defaults", complete("update", ""))
+
+
 class AgdSkillFolderTest(AgdCase):
     """A skill's files belong together: agd installs a kit's skill folder whole, or not at all."""
 
@@ -1713,6 +1869,14 @@ class AgdCheckTest(AgdCase):
                 errors = [line for line in result.stdout.splitlines() if line.startswith("error ")]
                 self.assertEqual(len(errors), 1, result.stdout)
                 self.assertRegex(errors[0], message)
+
+    def test_latest_checks_a_source_without_a_release_tag(self):
+        run(["git", "tag", "-d", "v1.0.0"], self.source)
+        self.assertEqual(self.check().returncode, 1)
+        result = subprocess.run([BASH, str(AGD), "check", str(self.source), "--latest"], env=self.env,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("No problems", result.stdout)
 
     def test_a_source_with_no_files_to_install_fails_the_check(self):
         result = self.check("pack core\n")

@@ -74,6 +74,7 @@ nav:
       - Combine sources: guides/combine-sources.md
       - Install for every project: guides/home.md
       - Adopt a copy: guides/adopt.md
+      - Move from skills.sh: guides/from-skills-sh.md
       - Mirrors, proxies and offline: guides/company-networks.md
       - Create a kit: guides/create-a-kit.md
   - Reference:

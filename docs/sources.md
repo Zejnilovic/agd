@@ -42,6 +42,8 @@ agd installs the newest tag that looks like `v<major.minor.patch>`, and `agd sta
 
 Projects can also install a release with `@1.2.0`, or a commit with `@<sha>`. A commit is useful for trying a change before you tag it.
 
+Tags are the recommended way to release, but a team that works from its newest commit can skip them: projects then use [`--latest`](guides/updates.md#follow-a-source-without-releases), and `agd check --latest` checks the source without asking for a tag. Those projects get no release notes, and every commit to the default branch reaches them on their next `agd update --latest`.
+
 ## What projects may change
 
 agd replaces a source's files when they update, but keeps three parts that belong to the project:
