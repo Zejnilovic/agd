@@ -28,6 +28,8 @@ Installs a source in the project, and writes `.agd.lock`.
 
 In a project that is already set up, `init <source>` adds another source. It stops when the new source ships a path another source installed; [choose one in `.agd-ignore`](../guides/combine-sources.md#when-two-sources-ship-the-same-path). Paths where the project already has its own file are skipped and listed as `taken`.
 
+agd stops, and writes nothing, when the packs it would install have no files, for example because the repository doesn't use the [source layout](../sources.md#the-layout).
+
 ## adopt
 
 ```text
@@ -117,7 +119,7 @@ Takes agd out of the project: removes every source, deletes the installed files 
 agd check [<folder>]
 ```
 
-Checks a source before you release it: its `packs.txt`, the paths in each pack, `requires`, release tags and `min-agd`, in the working tree of `<folder>` (default: the current folder), so it runs before you tag. It parses `packs.txt` as installs do, prints one line per error or warning, and exits with 1 when there is an error. A file in no pack is a warning when the root is a kit folder; with `root .`, files outside the packs stay out on purpose. A `tools:` entry in a kit file, or a `## This project` section in a file other than an `AGENTS.md`, is a warning too, since those belong to the project. It writes nothing and fetches nothing. See [Try it before you release](../sources.md#try-it-before-you-release).
+Checks a source before you release it: its `packs.txt`, the paths in each pack, `requires`, release tags and `min-agd`, in the working tree of `<folder>` (default: the current folder), so it runs before you tag. It parses `packs.txt` as installs do, prints one line per error or warning, and exits with 1 when there is an error. No file in any pack is an error, since installs stop on it. A file in no pack is a warning when the root is a kit folder; with `root .`, files outside the packs stay out on purpose. A `tools:` entry in a kit file, or a `## This project` section in a file other than an `AGENTS.md`, is a warning too, since those belong to the project. It writes nothing and fetches nothing. See [Try it before you release](../sources.md#try-it-before-you-release).
 
 ## feedback
 

@@ -50,7 +50,7 @@
 # Docs: https://zejnilovic.github.io/agd
 
 set -u
-version=0.5.0
+version=0.5.1
 default_name=agentic-defaults
 default_url=${AGD_SOURCE:-https://github.com/Zejnilovic/agentic-defaults.git}
 lock_file=.agd.lock
@@ -807,6 +807,8 @@ cmd_init() {
   fi
   check_needs "$tmp/new.packs" $wanted
   printf '%s\n' "$wanted" >"$tmp/wanted"
+  awk 'FILENAME == ARGV[1] { want[$1]; next } $1 in want { found = 1; exit } END { exit !found }' "$tmp/wanted" "$tmp/new.files" \
+    || die "no files to install from $name $(label "$v")${wanted:+ with the packs $(echo $wanted)}: a source keeps its kit in kit/, or in the root packs.txt names, and packs.txt lists its files. See https://zejnilovic.github.io/agd/sources/"
   stop_outside_home_kit "$name" "$tmp/new.files" "$tmp/wanted"
 
   # Decide every path before writing anything. A path another source installed is a conflict, unless
@@ -1372,6 +1374,9 @@ cmd_check() {
   sed -n "s/^agd: kit paths can't contain spaces or quotes: \(.*\)$/error    \1: kit paths can't contain spaces, quotes or backslashes/p" \
     "$tmp/c.bad" >>"$tmp/problems"
   assign_files "$tmp/c.packs" "$tmp/c.blobs" all >"$tmp/c.files"
+  if [ ! -s "$tmp/c.files" ] && { [ -z "$root" ] || [ -d "$top/$root" ]; }; then
+    echo "error    no pack lists a file, so installs stop: put files in $where and list them in a pack" >>"$tmp/problems"
+  fi
 
   # Each pack's paths: a file, or a folder ending in / with files under it.
   awk -v where="$where" 'FILENAME == ARGV[1] { file[$3] = 1; n = split($3, d, "/"); dir = ""

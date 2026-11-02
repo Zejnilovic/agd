@@ -632,6 +632,70 @@ class AgdAnySourceTest(AgdCase):
         run(["git", "tag", "v1.0.0"], repo)
         return repo
 
+    def skills_folder_source(self, packs=None):
+        """A repository in another tool's layout: its skills in skills/, with no kit/."""
+        repo = pathlib.Path(self._tmp.name) / "skills-repo"
+        repo.mkdir()
+        run(["git", "init", "-q", "-b", "main"], repo)
+        write(repo, "skills/foo/SKILL.md", "---\nname: foo\ndescription: Foo.\n---\n\nFoo.\n")
+        if packs:
+            write(repo, "packs.txt", packs)
+        run(["git", "add", "-A"], repo)
+        run(["git", "commit", "-q", "-m", "1.0.0"], repo)
+        run(["git", "tag", "v1.0.0"], repo)
+        return repo
+
+    def assert_stops_on_no_files(self, result):
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("no files to install", result.stderr)
+        self.assertIn("kit/", result.stderr)
+        self.assertIn("packs.txt", result.stderr)
+        self.assertNotIn("Installed", result.stdout)
+
+    def test_init_stops_on_a_release_with_no_files_to_install(self):
+        repo = self.skills_folder_source()
+        self.assert_stops_on_no_files(self.agd("init", str(repo)))
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_init_stops_on_a_commit_with_no_files_to_install(self):
+        repo = self.skills_folder_source()
+        sha = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+        self.assert_stops_on_no_files(self.agd("init", f"{repo}@{sha}"))
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_init_stops_on_packs_that_list_no_files(self):
+        repo = self.skills_folder_source("root .\n\npack all\n")
+        self.assert_stops_on_no_files(self.agd("init", str(repo)))
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_adding_a_source_with_no_files_leaves_the_project_as_it_was(self):
+        self.release("1.0.0")
+        self.assertEqual(self.agd("init").returncode, 0)
+        lock = (self.project / ".agd.lock").read_text()
+        self.assert_stops_on_no_files(self.agd("init", str(self.skills_folder_source())))
+        self.assertEqual((self.project / ".agd.lock").read_text(), lock)
+
+    def test_init_stops_when_the_named_pack_has_no_files(self):
+        self.release("1.0.0", packs=self.PACKS + "\npack empty\n")
+        self.assert_stops_on_no_files(self.agd("init", "--with", "empty"))
+        self.assertEqual(list(self.project.iterdir()), [])
+
+    def test_a_pack_with_no_files_installs_what_it_requires(self):
+        self.release("1.0.0", packs=self.PACKS + "\npack all requires flask\n")
+        result = self.agd("init", "--with", "all")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.project / ".claude/agents/flask-developer.md").is_file())
+
+    def test_a_release_whose_files_are_all_ignored_or_taken_still_installs(self):
+        repo = self.root_source()
+        write(self.project, ".agd-ignore", ".claude/agents/team-reviewer.md\n")
+        write(self.project, ".claude/skills/team/SKILL.md", "Our own.\n")
+        result = self.agd("init", str(repo))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("0 files", result.stdout)
+        self.assertIn("1 taken", result.stdout)
+        self.assertIn("1 ignored", result.stdout)
+
     def test_project_files_have_agd_names(self):
         self.release("1.0.0")
         self.assertEqual(self.agd("init").returncode, 0)
@@ -1541,6 +1605,18 @@ class AgdCheckTest(AgdCase):
                 errors = [line for line in result.stdout.splitlines() if line.startswith("error ")]
                 self.assertEqual(len(errors), 1, result.stdout)
                 self.assertRegex(errors[0], message)
+
+    def test_a_source_with_no_files_to_install_fails_the_check(self):
+        result = self.check("pack core\n")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"(?m)^error +no pack lists a file, so installs stop")
+
+    def test_a_missing_root_is_one_error(self):
+        result = self.check("root nowhere\n\npack core\n")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        errors = [line for line in result.stdout.splitlines() if line.startswith("error ")]
+        self.assertEqual(len(errors), 1, result.stdout)
+        self.assertIn("nowhere/ doesn't exist", errors[0])
 
     def test_warnings_dont_fail_the_check(self):
         result = self.check(self.PACKS.replace("pack react requires core\n  .claude/agents/react-developer.md\n",

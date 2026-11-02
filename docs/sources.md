@@ -34,7 +34,7 @@ pack release requires review
 - **`min-agd <version>`** is the oldest agd that can install this release. agd stops with an upgrade hint when it is older.
 - **`root <folder>`** is where the files are. The default is `kit/`.
 
-Without `packs.txt`, every file under `kit/` is one pack, `core`.
+Without `packs.txt`, every file under `kit/` is one pack, `core`. When the packs a project would install have no files, `agd init` stops and writes nothing.
 
 ## Releases
 
@@ -75,7 +75,7 @@ A kit whose files are all under `.claude/`, with plain ASCII names and no `.clau
 
 ## Try it before you release
 
-First check the source. In its folder, `agd check` reads the working tree, so it runs before you commit or tag. It checks `packs.txt` as an install reads it: every path exists, a folder ends in `/`, no file is in two packs, each `requires` names a pack of this source or `<source>:<pack>`, no packs require each other in a cycle, no path has spaces or quotes, there is a `v<major.minor.patch>` tag, and `min-agd` isn't newer than your agd. It also warns about a `tools:` entry in a kit file, and a `## This project` section in a file other than an `AGENTS.md`. It prints one line per problem and exits with 1 on an error; warnings, such as a line it doesn't know, don't fail it. It writes nothing and fetches nothing, so it fits in your CI:
+First check the source. In its folder, `agd check` reads the working tree, so it runs before you commit or tag. It checks `packs.txt` as an install reads it: at least one pack lists a file, every path exists, a folder ends in `/`, no file is in two packs, each `requires` names a pack of this source or `<source>:<pack>`, no packs require each other in a cycle, no path has spaces or quotes, there is a `v<major.minor.patch>` tag, and `min-agd` isn't newer than your agd. It also warns about a `tools:` entry in a kit file, and a `## This project` section in a file other than an `AGENTS.md`. It prints one line per problem and exits with 1 on an error; warnings, such as a line it doesn't know, don't fail it. It writes nothing and fetches nothing, so it fits in your CI:
 
 ```text
 $ agd check

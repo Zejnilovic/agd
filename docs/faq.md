@@ -15,6 +15,14 @@ Mostly. Cursor reads the folders agentic-defaults installs, but not every line i
 - An agent's `model:` line: Cursor expects `inherit` or one of its model IDs, and doesn't document short names such as `sonnet`. Set the line to `inherit` or a Cursor model ID; it belongs to the project, so updates keep it.
 - An agent's `tools:` line: ignored. Cursor's agents get all of the parent's tools, and only `readonly: true` limits them.
 
+## Does agd work with skills.sh?
+
+Partly. Both use `SKILL.md` files and `.claude/skills/`, but they find, install and update skills differently:
+
+- **Installing a kit's skills with the [skills CLI](https://github.com/vercel-labs/skills).** Its search should find skills under `kit/.claude/skills/`, so `npx skills add <owner>/<kit>` can take them. You get only the skills, not the kit's `AGENTS.md` or agents, and agd doesn't track or update them.
+- **Installing a skills.sh repository with agd.** Most keep their skills in `skills/<name>/`, without `packs.txt` or `v1.2.3` tags. agd copies paths as they are, so `skills/` wouldn't reach `.claude/skills/`. The repository needs the [source layout](sources.md#the-layout): the skills under `.claude/skills/` in its kit, listed in a pack, with a release tag or a commit to install.
+- **Using both in one project.** It works, but keep each skill with one tool. A file the skills CLI already installed counts as `taken`, so agd leaves it alone, while it still installs the other files of that skill's folder.
+
 ## Does agd run code from a source?
 
 No. agd only copies files, and never runs anything it installs. Scripts and hooks a source ships run only when an agent or a person runs them, as with any file in your repository, so review a source's releases as you would review a dependency. If a source moves a release's tag after you installed it, agd stops and shows the change before using it: see [When a release changes](guides/updates.md#when-a-release-changes-after-you-installed-it). In your home folder, where a file could run without anyone asking, agd [installs only under `.claude/`](guides/home.md#when-agd-stops).
@@ -77,6 +85,7 @@ agd's messages say what to do next. The common ones:
 |---|---|
 | `no .agd.lock in ...: run agd init` | The folder isn't set up with agd. Run `agd init`, or use `-C` to point at the project. |
 | `this project has a copy of agentic-defaults ...: run agd adopt` | The project copied agentic-defaults before agd. [Adopt it](guides/adopt.md). |
+| `no files to install from ...` | The repository doesn't use the [source layout](sources.md#the-layout), or the packs you chose list no files. |
 | `release ... needs agd ... or newer` | The source needs a newer agd. [Update agd](install.md). |
 | `can't fetch ...` | Check the URL and your network or credentials, or work from the cache with `--offline`. |
 | `... has no releases (tags like v1.2.3)` | The source has no release tags yet. Install a commit, `<source>@<sha>`, or ask its maintainers to tag a release. |

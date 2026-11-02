@@ -6,6 +6,12 @@ Version numbers: **major** when the lock or `packs.txt` format changes and proje
 
 A bullet can end with the issues it touches: `(#12)` means this release fixes #12, `(ref #20)` means a related change that leaves #20 open, and they combine as `(ref #20, ref #11, #12)`. When the release is out, each issue gets a comment, and the fixed ones are closed.
 
+## 0.5.1 (unreleased)
+
+- `agd init` stops when the packs it would install have no files, instead of reporting "Installed ... 0 files" and writing a lock. A repository in another layout, such as `skills/<name>/SKILL.md`, used to get that success message. A release whose files are all ignored or taken still installs, as before.
+- `agd check` reports the same case as an error: no pack lists a file.
+- The FAQ explains how agd and [skills.sh](https://www.skills.sh/) fit together.
+
 ## 0.5.0 (2026-11-01)
 
 - `--home` works in your home folder, for every project on your machine: `agd --home init`, `agd --home update` and so on. It's a way to name the folder, so `-C ~` and running in `~` get the same rules. [Install for every project](https://zejnilovic.github.io/agd/guides/home/) explains them.
