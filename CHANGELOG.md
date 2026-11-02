@@ -6,7 +6,7 @@ Version numbers: **major** when the lock or `packs.txt` format changes and proje
 
 A bullet can end with the issues it touches: `(#12)` means this release fixes #12, `(ref #20)` means a related change that leaves #20 open, and they combine as `(ref #20, ref #11, #12)`. When the release is out, each issue gets a comment, and the fixed ones are closed.
 
-## 0.5.1 (unreleased)
+## 0.5.1 (2026-11-02)
 
 - `--latest` is for sources that don't tag releases. `agd init --latest`, `agd adopt --latest` and `agd update --latest` take the newest commit on the source's default branch, and record its SHA in `.agd.lock`. With several sources, name the one to move: `agd update --latest team-kit`. A plain `agd update` doesn't follow the branch; `status` and `update` say when it has moved on. `agd check --latest` doesn't require a release tag.
 - A new guide, [Move from skills.sh](https://zejnilovic.github.io/agd/guides/from-skills-sh/), rewrites a skills.sh repository as a kit source and moves projects over. The FAQ compares agd with similar tools.
