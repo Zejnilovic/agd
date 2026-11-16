@@ -41,7 +41,7 @@ For a private source, give git a token that can read it before the update step, 
 The files an update changes are instructions for your agents: what they do, which tools they may run, which model they use. Someone should read a new release of them before every agent in the project follows it, as with a dependency update. The pull request is that review, and your checks run on it.
 
 !!! note "Checks on the pull request"
-    GitHub doesn't start workflows for a pull request that a workflow opened with its own token. To run your checks on it, close and reopen the pull request, or give the update step a token of a GitHub App or a person as `GH_TOKEN`.
+    GitHub doesn't run your checks on its own for a commit the workflow made with its own token. In agd's repository, the check runs wait with the status **Action required**. Open one and click **Approve and run**. To have the checks run without that step, give the update step a token of a GitHub App or a person as `GH_TOKEN`. If no check run shows up at all, close and reopen the pull request.
 
 ## What the pull request shows
 
