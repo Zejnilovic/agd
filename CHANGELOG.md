@@ -6,7 +6,7 @@ Version numbers: **major** when the lock or `packs.txt` format changes and proje
 
 A bullet can end with the issues it touches: `(#12)` means this release fixes #12, `(ref #20)` means a related change that leaves #20 open, and they combine as `(ref #20, ref #11, #12)`. When the release is out, each issue gets a comment, and the fixed ones are closed.
 
-## 0.5.2 (unreleased)
+## 0.5.2 (2026-11-16)
 
 - The [automatic-updates workflow](https://zejnilovic.github.io/agd/guides/automatic-updates/) commits through GitHub's API, which signs the commit, instead of pushing with git. It now works in a repository whose ruleset requires signed commits on every branch. Executable files may lose their mode, and the pull request lists them. Copy the new `agd-update.yml` to get it. (#15)
 - The FAQ and the [home guide](https://zejnilovic.github.io/agd/guides/home/#copilot-cli) cover Copilot CLI, from real sessions: what it reads from a kit, and how to point it at `~/.claude/` when it doesn't load a home kit.
