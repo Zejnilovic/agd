@@ -2892,5 +2892,122 @@ class AgdCompletionTest(AgdCase):
         self.assertIn("bash or zsh", result.stderr)
 
 
+def workflow_step(name):
+    """The run script of a step in agd-update.yml, read as text: the tests have no YAML parser."""
+    lines = (REPO / ".github/workflows/agd-update.yml").read_text().splitlines()
+    start = lines.index(f"      - name: {name}")
+    run_at = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |")
+    script = []
+    for line in lines[run_at + 1:]:
+        if line.strip() and not line.startswith(" " * 10):
+            break
+        script.append(line[10:])
+    return "\n".join(script) + "\n"
+
+
+# Answers the gh calls of the update step and logs each one; a graphql call's input goes to graphql.json.
+FAKE_WORKFLOW_GH = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$GH_DIR/log"
+case "$*" in
+  "api graphql --input - --jq "*) cat > "$GH_DIR/graphql.json"; cat "$GH_DIR/oid" ;;
+  "api repos/owner/repo/git/ref/heads/agd-update") [ -f "$GH_DIR/branch-exists" ] ;;
+  "pr list "*) cat "$GH_DIR/pr" 2>/dev/null || true ;;
+esac
+"""
+
+# Changes the project as an update would, and prints what agd update prints.
+FAKE_WORKFLOW_AGD = """#!/usr/bin/env bash
+echo changed > kept.md
+rm gone.md
+mkdir -p "new dir" && printf 'a\\nb\\n' > "new dir/a file.md"
+printf '#!/bin/sh\\n' > run.sh && chmod +x run.sh
+echo "kit is at 1.1.0: 1 updated, 2 added, 1 removed."
+"""
+
+
+@unittest.skipUnless(shutil.which("jq"), "the update step needs jq")
+class UpdateWorkflowTest(unittest.TestCase):
+    """The update step of agd-update.yml, with fake gh and agd: it commits through the API (#15)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = pathlib.Path(self.tmp.name)
+        self.project, self.gh_dir, self.temp = root / "project", root / "gh", root / "runner"
+        for folder in (self.project, self.gh_dir, self.temp, root / "bin"):
+            folder.mkdir()
+        for name, text in (("gh", FAKE_WORKFLOW_GH), ("agd", FAKE_WORKFLOW_AGD)):
+            (root / "bin" / name).write_text(text)
+            (root / "bin" / name).chmod(0o755)
+        (self.gh_dir / "oid").write_text("c0ffee\n")
+        write(self.project, "kept.md", "old\n")
+        write(self.project, "gone.md")
+        run(["git", "init", "-q"], self.project)
+        run(["git", "add", "-A"], self.project)
+        run(["git", "commit", "-q", "-m", "start"], self.project)
+        self.base = run(["git", "rev-parse", "HEAD"], self.project).stdout.strip()
+        self.env = {**GIT_ENV, "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                    "GH_DIR": str(self.gh_dir), "RUNNER_TEMP": str(self.temp), "BRANCH": "agd-update",
+                    "GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "7", "GITHUB_RUN_ATTEMPT": "1"}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def step(self):
+        # GitHub runs a step with shell: bash as bash --noprofile --norc -eo pipefail.
+        return subprocess.run([BASH, "--noprofile", "--norc", "-eo", "pipefail", "-c",
+                               workflow_step("Update and open a pull request")],
+                              cwd=self.project, env=self.env, capture_output=True, text=True)
+
+    def calls(self):
+        return (self.gh_dir / "log").read_text().splitlines()
+
+    def test_commits_the_changes_through_the_api(self):
+        result = self.step()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        variables = json.loads((self.gh_dir / "graphql.json").read_text())["variables"]["input"]
+        self.assertEqual(variables["branch"], {"repositoryNameWithOwner": "owner/repo",
+                                               "branchName": "agd-update-tmp-7-1"})
+        self.assertEqual(variables["expectedHeadOid"], self.base)
+        self.assertEqual(variables["message"]["headline"], "Update the agentic setup")
+        self.assertIn("kit is at 1.1.0", variables["message"]["body"])
+        import base64
+        added = {a["path"]: base64.b64decode(a["contents"]).decode()
+                 for a in variables["fileChanges"]["additions"]}
+        self.assertEqual(added, {"kept.md": "changed\n", "new dir/a file.md": "a\nb\n", "run.sh": "#!/bin/sh\n"})
+        self.assertEqual(variables["fileChanges"]["deletions"], [{"path": "gone.md"}])
+        # Nothing is committed or pushed with git.
+        self.assertEqual(run(["git", "rev-parse", "HEAD"], self.project).stdout.strip(), self.base)
+
+    def test_moves_the_branch_to_the_commit_and_deletes_the_temporary_one(self):
+        self.assertEqual(self.step().returncode, 0)
+        calls = self.calls()
+        refs = "api -X POST repos/owner/repo/git/refs"
+        self.assertEqual(calls[0], f"{refs} -f ref=refs/heads/agd-update-tmp-7-1 -f sha={self.base}")
+        self.assertIn(f"{refs} -f ref=refs/heads/agd-update -f sha=c0ffee", calls)
+        self.assertEqual(calls[-1], "api -X DELETE repos/owner/repo/git/refs/heads/agd-update-tmp-7-1")
+
+    def test_an_existing_branch_moves_without_losing_its_pull_request(self):
+        (self.gh_dir / "branch-exists").touch()
+        (self.gh_dir / "pr").write_text("12\n")
+        self.assertEqual(self.step().returncode, 0)
+        calls = self.calls()
+        self.assertIn("api -X PATCH repos/owner/repo/git/refs/heads/agd-update -f sha=c0ffee -F force=true", calls)
+        self.assertTrue(any(c.startswith("pr edit 12 ") for c in calls), calls)
+
+    def test_the_pull_request_names_executable_files(self):
+        self.assertEqual(self.step().returncode, 0)
+        body = (self.temp / "body.md").read_text()
+        self.assertIn("may lose their executable bit", body)
+        self.assertIn("- `run.sh`", body)
+        self.assertNotIn("`kept.md`", body)
+
+    def test_no_commit_from_the_api_fails_and_deletes_the_temporary_branch(self):
+        (self.gh_dir / "oid").write_text("")
+        result = self.step()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("::error::GitHub's API made no commit.", result.stdout)
+        self.assertEqual(self.calls()[-1], "api -X DELETE repos/owner/repo/git/refs/heads/agd-update-tmp-7-1")
+
+
 if __name__ == "__main__":
     unittest.main()

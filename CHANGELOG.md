@@ -8,6 +8,7 @@ A bullet can end with the issues it touches: `(#12)` means this release fixes #1
 
 ## 0.5.2 (unreleased)
 
+- The [automatic-updates workflow](https://zejnilovic.github.io/agd/guides/automatic-updates/) commits through GitHub's API, which signs the commit, instead of pushing with git. It now works in a repository whose ruleset requires signed commits on every branch. Executable files may lose their mode, and the pull request lists them. Copy the new `agd-update.yml` to get it. (#15)
 - The FAQ and the [home guide](https://zejnilovic.github.io/agd/guides/home/#copilot-cli) cover Copilot CLI, from real sessions: what it reads from a kit, and how to point it at `~/.claude/` when it doesn't load a home kit.
 
 ## 0.5.1 (2026-11-02)
