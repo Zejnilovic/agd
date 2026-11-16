@@ -1,6 +1,6 @@
 # Keep projects up to date automatically
 
-A project stays on its release until someone runs `agd update`. A scheduled GitHub Actions workflow can do it for you: each week it checks for a newer release, runs the update, and opens a pull request with the changes.
+A project stays on its release until someone runs `agd update`. The GitHub Action [agd-action](https://github.com/Zejnilovic/agd-action) can do it for you: on a schedule, it checks for a newer release, runs the update, and opens a pull request with the changes.
 
 ## The workflow
 
@@ -12,11 +12,34 @@ agd keeps its own repository's setup up to date with this file, so it is the one
 
 It runs on Mondays, and whenever you start it from the Actions tab (**Run workflow**). Each run:
 
-1. Installs a pinned agd release and checks the file against the checksum from the release's [`SHA256SUMS`](../install.md#check-a-download), so a changed download fails the run.
-2. Runs `agd status --check`. Exit 0 means nothing is due, and the run ends there. Any exit above 1 is an error, which fails the run.
-3. On exit 1, runs `agd update`, commits the result to the `agd-update` branch through GitHub's API, and opens a pull request, or updates the body of the one that is open. The body is what `agd update` printed.
+1. Installs the agd release that this version of the action pins, and checks the download against its SHA-256, so a changed download fails the run.
+2. Runs `agd status --check`. When nothing is due, the run ends there. An error, such as a [moved tag](updates.md#when-a-release-changes-after-you-installed-it), fails the run.
+3. When an update is due, runs `agd update`, commits the result to the `agd-update` branch, and opens a pull request, or updates the body of the one that is open. The body is what `agd update` printed.
 
-To move to a newer agd, change `AGD_VERSION` and `AGD_SHA256`: the checksum is the `agd` line of that release's `SHA256SUMS`.
+A source you follow with `--latest` is never due, so the action doesn't move it: [Follow a source without releases](updates.md#follow-a-source-without-releases) says why.
+
+The action's [README](https://github.com/Zejnilovic/agd-action#readme) lists its inputs, such as another branch name, and its outputs. With `mode: check`, it only tells you whether an update is due.
+
+## Which agd it runs
+
+Each release of the action pins one agd release, and agd's own release moves it: a new agd patch release makes a patch release of the action, a minor one a minor release. A new agd major version, which may need manual steps in projects, comes as a new major version of the action, so `@v1` never jumps a major.
+
+`@v1` follows each release. To review each new agd version before your project runs it, pin the action to a commit and let Dependabot propose the next one:
+
+```yaml
+      - uses: Zejnilovic/agd-action@<commit sha> # v1.0.0
+```
+
+```yaml title=".github/dependabot.yml"
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+```
+
+If your organization runs only actions it allows, fork agd-action into it and use the fork.
 
 ## Permissions
 
@@ -28,20 +51,20 @@ pull request create failed: GraphQL: GitHub Actions is not permitted to create o
 
 In **Settings → Actions → General**, under "Workflow permissions", turn on **Allow GitHub Actions to create and approve pull requests**, and run the workflow again. In an organization, the organization's settings may have to allow it first.
 
+For a private source, give git a token that can read it in a step before the action, as [the FAQ shows](../faq.md#can-a-source-be-private).
+
 ## Signed commits
 
-The workflow makes its commit with GitHub's API (`createCommitOnBranch`), not with `git push`, and GitHub signs a commit made that way. So it works in a repository whose ruleset requires signed commits on every branch, and the commit shows as **Verified**. The commit goes to a temporary branch first, and `agd-update` then moves to it, so an open pull request stays open.
+The action makes its commit with GitHub's API (`createCommitOnBranch`), not with `git push`, and GitHub signs a commit made that way. So it works in a repository whose ruleset requires signed commits on every branch, and the commit shows as **Verified**. The commit goes to a temporary branch first, and `agd-update` then moves to it, so an open pull request stays open.
 
 The API commits files without their mode. A kit file agd installs as executable may lose its executable bit on the branch, and the pull request lists those files. A kit whose scripts are run with `bash <script>` isn't affected.
-
-For a private source, give git a token that can read it before the update step, as [the FAQ shows](../faq.md#can-a-source-be-private).
 
 ## Why a pull request, not a push
 
 The files an update changes are instructions for your agents: what they do, which tools they may run, which model they use. Someone should read a new release of them before every agent in the project follows it, as with a dependency update. The pull request is that review, and your checks run on it.
 
 !!! note "Checks on the pull request"
-    GitHub doesn't run your checks on its own for a commit the workflow made with its own token. In agd's repository, the check runs wait with the status **Action required**. Open one and click **Approve and run**. To have the checks run without that step, give the update step a token of a GitHub App or a person as `GH_TOKEN`. If no check run shows up at all, close and reopen the pull request.
+    GitHub doesn't run your checks on its own for a commit the workflow made with its own token. In agd's repository, the check runs wait with the status **Action required**. Open one and click **Approve and run**. To have the checks run without that step, give the action a GitHub App's or a person's token as its `token` input. If no check run shows up at all, close and reopen the pull request.
 
 ## What the pull request shows
 

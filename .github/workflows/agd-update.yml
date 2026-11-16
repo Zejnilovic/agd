@@ -1,4 +1,4 @@
-# Keeps this repository's agentic setup up to date: weekly, it runs agd update and opens a pull request
+# Keeps this repository's agentic setup up to date: weekly, agd-action runs agd update and opens a pull request
 # with the changes. docs/guides/automatic-updates.md shows this file; any project can copy it as is.
 name: Update the agentic setup
 
@@ -11,99 +11,12 @@ permissions:
   contents: write
   pull-requests: write
 
-# bash -eo pipefail instead of the default bash -e, so a failing agd update isn't hidden by tee.
-defaults:
-  run:
-    shell: bash
-
 jobs:
   update:
     runs-on: ubuntu-latest
-    env:
-      # A pinned agd release, and the SHA-256 of its agd file from the release's SHA256SUMS.
-      AGD_VERSION: 0.5.0
-      AGD_SHA256: c0aab28e39ffbd8a6b38ca859802d010915505f2ec9a3871ed068d3891bbd03b
-      BRANCH: agd-update
     steps:
       - uses: actions/checkout@v5
         with:
-          # Nothing pushes with git, so the token needn't stay in .git/config.
+          # The action commits through GitHub's API, so the token needn't stay in .git/config.
           persist-credentials: false
-      - name: Install agd
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSLo "$HOME/.local/bin/agd" "https://github.com/Zejnilovic/agd/releases/download/v$AGD_VERSION/agd"
-          echo "$AGD_SHA256  $HOME/.local/bin/agd" | sha256sum -c -
-          chmod +x "$HOME/.local/bin/agd"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Check for a newer setup
-        id: check
-        run: |
-          code=0
-          agd status --check || code=$?
-          [ "$code" -le 1 ] || exit "$code"
-          echo "due=$code" >> "$GITHUB_OUTPUT"
-      - name: Update and open a pull request
-        if: steps.check.outputs.due == '1'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          agd update | tee "$RUNNER_TEMP/update.txt"
-          # Only files this project edited are due, and the update leaves those alone.
-          [ -n "$(git status --porcelain)" ] || exit 0
-          # The commit goes through GitHub's API, which signs it, so a ruleset that requires signed
-          # commits accepts it. Contents go to JSON files, not arguments: Linux limits one argument
-          # to 128 KiB, and a whole kit can be larger.
-          git add -A
-          : > "$RUNNER_TEMP/additions.jsonl"
-          : > "$RUNNER_TEMP/executable.txt"
-          git diff --cached --no-renames --name-only --diff-filter=AM -z | while IFS= read -r -d '' path; do
-            base64 < "$path" | tr -d '\n' | jq -Rs --arg path "$path" '{path: $path, contents: .}' >> "$RUNNER_TEMP/additions.jsonl"
-            [ ! -x "$path" ] || echo "$path" >> "$RUNNER_TEMP/executable.txt"
-          done
-          jq -s . "$RUNNER_TEMP/additions.jsonl" > "$RUNNER_TEMP/additions.json"
-          git diff --cached --no-renames --name-only --diff-filter=D -z \
-            | while IFS= read -r -d '' path; do jq -n --arg path "$path" '{path: $path}'; done \
-            | jq -s . > "$RUNNER_TEMP/deletions.json"
-          # The commit is made on a temporary branch, then $BRANCH moves to it in one step. Resetting
-          # $BRANCH first would leave it without commits for a moment, and GitHub closes an open pull
-          # request whose branch has none. The trap deletes the temporary branch, also after a failure.
-          base=$(git rev-parse HEAD)
-          tmp="$BRANCH-tmp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$tmp" -f sha="$base" > /dev/null
-          trap 'gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$tmp" > /dev/null 2>&1 || true' EXIT
-          commit=$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg branch "$tmp" --arg oid "$base" \
-            --arg headline "Update the agentic setup" --rawfile body "$RUNNER_TEMP/update.txt" \
-            --slurpfile add "$RUNNER_TEMP/additions.json" --slurpfile del "$RUNNER_TEMP/deletions.json" \
-            '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
-              variables: {input: {branch: {repositoryNameWithOwner: $repo, branchName: $branch},
-                expectedHeadOid: $oid, message: {headline: $headline, body: $body},
-                fileChanges: {additions: $add[0], deletions: $del[0]}}}}' \
-            | gh api graphql --input - --jq '.data.createCommitOnBranch.commit.oid')
-          [ -n "$commit" ] || { echo "::error::GitHub's API made no commit."; exit 1; }
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" > /dev/null 2>&1; then
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" -f sha="$commit" -F force=true > /dev/null
-          else
-            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$commit" > /dev/null
-          fi
-          {
-            echo 'The weekly `agd update` changed these files. Read the changes before you merge: they are instructions for agents.'
-            echo
-            echo '```text'
-            cat "$RUNNER_TEMP/update.txt"
-            echo '```'
-            echo
-            echo 'An `edited` line is a file this project changed, which the update left alone. Settle it after you merge, with `agd diff`, then `agd merge` or `agd reset`: the next run replaces this branch.'
-            if [ -s "$RUNNER_TEMP/executable.txt" ]; then
-              echo
-              echo 'The commit carries no file modes, so these executable files may lose their executable bit. Check their mode in the diff, and after you merge, restore it with `git update-index --chmod=+x <path>`:'
-              echo
-              sed 's/.*/- `&`/' "$RUNNER_TEMP/executable.txt"
-            fi
-          } > "$RUNNER_TEMP/body.md"
-          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
-          if [ -n "$pr" ]; then
-            gh pr edit "$pr" --body-file "$RUNNER_TEMP/body.md"
-          else
-            gh pr create --head "$BRANCH" --title "Update the agentic setup" --body-file "$RUNNER_TEMP/body.md"
-          fi
+      - uses: Zejnilovic/agd-action@v1

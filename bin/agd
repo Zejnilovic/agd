@@ -54,7 +54,7 @@
 # Docs: https://zejnilovic.github.io/agd
 
 set -u
-version=0.5.2
+version=0.5.3
 default_name=agentic-defaults
 default_url=${AGD_SOURCE:-https://github.com/Zejnilovic/agentic-defaults.git}
 lock_file=.agd.lock

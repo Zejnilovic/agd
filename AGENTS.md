@@ -98,7 +98,7 @@ No Makefile yet; these are the real commands under the standard names.
 
 - The site, https://zejnilovic.github.io/agd, is built from `docs/` and `mkdocs.yml` by the Docs workflow on every push to `main`. `README.md` is its short version.
 - Change the docs with the behavior, in the same change. Show real output: run the commands rather than writing it by hand. When the source layout, the project parts or `agd check` change, also update `docs/guides/create-a-kit.md`, and tell the maintainer that the `kit-authoring` skill in Zejnilovic/agentic-home needs the same change.
-- People copy these into their scripts, so keep them working: the install script's URL, `https://raw.githubusercontent.com/Zejnilovic/agd/main/install.sh`, the release files `agd` and `SHA256SUMS` under `releases/latest/download/`, and the name `Zejnilovic/agentic-home`, the home folder's default source.
+- People copy these into their scripts, so keep them working: the install script's URL, `https://raw.githubusercontent.com/Zejnilovic/agd/main/install.sh`, the release files `agd` and `SHA256SUMS` under `releases/latest/download/`, the name `Zejnilovic/agentic-home`, the home folder's default source, and `uses: Zejnilovic/agd-action@v1`, the automatic-updates workflow's step.
 
 ### Contracts
 
@@ -107,6 +107,7 @@ Projects and sources depend on these. Changing one needs a major version, and a 
 - the lock format (`agd-lock 1` in `.agd.lock`) and the ignore file (`.agd-ignore`, plus reading `.agentic-defaults-ignore`),
 - the source layout: `v<major.minor.patch>` tags, `kit/` or the `root` in `packs.txt`, and `packs.txt` itself (`min-agd`, `pack ... requires ...`, `<source>:<pack>`),
 - the project parts: an agent's `model:` and `tools:` lines, and a closing `## This project` section.
+- what `Zejnilovic/agd-action` relies on: `agd status --check` exits 0 when nothing is due, 1 when an update is due and above 1 on an error, and `agd update` changes only the project's files.
 
 ### Versions and releases
 

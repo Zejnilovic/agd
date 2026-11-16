@@ -6,6 +6,10 @@ Version numbers: **major** when the lock or `packs.txt` format changes and proje
 
 A bullet can end with the issues it touches: `(#12)` means this release fixes #12, `(ref #20)` means a related change that leaves #20 open, and they combine as `(ref #20, ref #11, #12)`. When the release is out, each issue gets a comment, and the fixed ones are closed.
 
+## 0.5.3 (unreleased)
+
+- The [automatic-updates workflow](https://zejnilovic.github.io/agd/guides/automatic-updates/) is one step, `uses: Zejnilovic/agd-action@v1`, from the new GitHub Action [agd-action](https://github.com/Zejnilovic/agd-action). It does what the copied workflow did, signed commit included, and each agd release moves it to the new agd, so there's no version or checksum to bump by hand. Pin it to a commit and let Dependabot propose each new version, if you want to review them. Replace your copy of `agd-update.yml` with the new one.
+
 ## 0.5.2 (2026-11-16)
 
 - The [automatic-updates workflow](https://zejnilovic.github.io/agd/guides/automatic-updates/) commits through GitHub's API, which signs the commit, instead of pushing with git. It now works in a repository whose ruleset requires signed commits on every branch. Executable files may lose their mode, and the pull request lists them. Copy the new `agd-update.yml` to get it. (#15)
