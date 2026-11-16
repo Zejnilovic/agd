@@ -295,6 +295,84 @@ class ReleaseTest(unittest.TestCase):
             self.assertNotIn("agd-0.1.0/" + rel, listed)
 
 
+class ActionPinTest(unittest.TestCase):
+    """scripts/action_pin.sh, which the Release workflow runs on a clone of Zejnilovic/agd-action."""
+
+    HEAD = "# Changelog\n\nWhat changed in agd-action.\n\n"
+    RELEASED = "## 1.0.0 (2026-11-20)\n\n- The first release.\n"
+    SUM = "ab" * 32
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.action = pathlib.Path(self._tmp.name)
+        self.pin_file = self.action / "agd-release"
+        self.changelog = self.action / "CHANGELOG.md"
+        self.pin_file.write_text("version 0.5.2\nsha256 " + "cd" * 32 + "\n")
+        self.changelog.write_text(self.HEAD + self.RELEASED)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def pin(self, version):
+        return run(["bash", str(REPO / "scripts/action_pin.sh"), str(self.action), version, self.SUM], self.action)
+
+    def bullet(self, version):
+        return f"- Runs [agd {version}](https://github.com/Zejnilovic/agd/releases/tag/v{version})."
+
+    def test_an_agd_patch_is_an_action_patch(self):
+        result = self.pin("0.5.3")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "1.0.1")
+        self.assertEqual(self.pin_file.read_text(), f"version 0.5.3\nsha256 {self.SUM}\n")
+        self.assertEqual(self.changelog.read_text(),
+                         self.HEAD + f"## 1.0.1 (unreleased)\n\n{self.bullet('0.5.3')}\n\n" + self.RELEASED)
+
+    def test_an_agd_minor_is_an_action_minor(self):
+        result = self.pin("0.6.0")
+        self.assertEqual(result.stdout.strip(), "1.1.0")
+        self.assertIn("## 1.1.0 (unreleased)\n\n" + self.bullet("0.6.0"), self.changelog.read_text())
+
+    def test_an_agd_major_changes_nothing_and_exits_3(self):
+        result = self.pin("1.0.0")
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("agd 1.0.0 is a new major version", result.stderr)
+        self.assertIn("0.5.2", self.pin_file.read_text())
+        self.assertEqual(self.changelog.read_text(), self.HEAD + self.RELEASED)
+
+    def test_an_unreleased_entry_keeps_its_bullets_and_rises_to_the_level(self):
+        self.changelog.write_text(self.HEAD + "## 1.0.1 (unreleased)\n\n- A README fix.\n\n" + self.RELEASED)
+        result = self.pin("0.6.0")
+        self.assertEqual(result.stdout.strip(), "1.1.0")
+        self.assertEqual(self.changelog.read_text(), self.HEAD + "## 1.1.0 (unreleased)\n\n"
+                         + self.bullet("0.6.0") + "\n- A README fix.\n\n" + self.RELEASED)
+
+    def test_a_higher_unreleased_version_stays(self):
+        self.changelog.write_text(self.HEAD + "## 1.1.0 (unreleased)\n\n- New input.\n\n" + self.RELEASED)
+        self.assertEqual(self.pin("0.5.3").stdout.strip(), "1.1.0")
+        self.assertIn("## 1.1.0 (unreleased)\n\n" + self.bullet("0.5.3") + "\n- New input.\n", self.changelog.read_text())
+
+    def test_before_the_first_release_the_entry_keeps_its_version(self):
+        self.changelog.write_text(self.HEAD + "## 1.0.0 (unreleased)\n\n- The first release.\n")
+        self.assertEqual(self.pin("0.5.3").stdout.strip(), "1.0.0")
+        self.assertIn("## 1.0.0 (unreleased)\n\n" + self.bullet("0.5.3"), self.changelog.read_text())
+
+    def test_the_pinned_version_again_changes_nothing(self):
+        before = self.pin_file.read_text()
+        result = self.pin("0.5.2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("already runs agd 0.5.2", result.stderr)
+        self.assertEqual(self.pin_file.read_text(), before)
+        self.assertEqual(self.changelog.read_text(), self.HEAD + self.RELEASED)
+
+    def test_refuses_a_bad_version_or_checksum(self):
+        for args in (["0.5"], ["0.5.3", "xyz"]):
+            result = run(["bash", str(REPO / "scripts/action_pin.sh"), str(self.action), *args,
+                          *([] if len(args) > 1 else [self.SUM])], self.action)
+            self.assertEqual(result.returncode, 2, args)
+            self.assertEqual(self.changelog.read_text(), self.HEAD + self.RELEASED)
+
+
 class InstallTest(unittest.TestCase):
     """install.sh against a temporary agd repository, without network."""
 

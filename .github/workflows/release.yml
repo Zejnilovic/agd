@@ -2,7 +2,8 @@ name: Release
 
 # Releases VERSION: dates its CHANGELOG.md entry, tags the release commit v<version>, creates the GitHub
 # release with the archive agd-<version>.tar.gz, the plain script agd and their SHA256SUMS, attests that this
-# workflow built them, and points the formula in Zejnilovic/homebrew-tap at the archive. It closes or comments on
+# workflow built them, points the formula in Zejnilovic/homebrew-tap at the archive, and moves Zejnilovic/agd-action
+# to the new agd and starts its release. It closes or comments on
 # the issues the notes name. Then it installs the release every documented way, and checks the plain script's
 # attestation.
 # Start it from the Actions tab. A dry run does everything but push, and shows the notes and the formula; it
@@ -91,6 +92,24 @@ jobs:
             git -C "$RUNNER_TEMP/tap" add -N Formula/agd.rb
             git -C "$RUNNER_TEMP/tap" diff
             echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # agd-action pins one agd release (agd-release); this moves it to the new one. A new agd major version is
+      # a new action major, released by hand, so action_pin.sh exits 3 and the release goes on without it.
+      - name: Prepare agd-action
+        run: |
+          git clone -q --depth 1 https://github.com/Zejnilovic/agd-action.git "$RUNNER_TEMP/action"
+          code=0
+          action_version=$(bash scripts/action_pin.sh "$RUNNER_TEMP/action" "$VERSION" "$(sha256sum "$DIST/agd" | cut -d' ' -f1)") || code=$?
+          if [ "$code" -eq 3 ]; then
+            echo "::warning::agd $VERSION is a new major version: release agd-action's next major version by hand."
+            { echo '## Zejnilovic/agd-action'; echo; echo "Not moved: agd $VERSION is a new major version."; } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [ "$code" -eq 0 ] || exit "$code"
+          [ -n "$action_version" ] || exit 0
+          echo "ACTION_VERSION=$action_version" >> "$GITHUB_ENV"
+          { echo "## Zejnilovic/agd-action $action_version"; echo; echo '```diff'
+            git -C "$RUNNER_TEMP/action" diff
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Push the commit and tag
         if: ${{ !inputs.dry_run }}
         run: git push --atomic origin "HEAD:$GITHUB_REF_NAME" "v$VERSION"
@@ -110,6 +129,19 @@ jobs:
           git add Formula/agd.rb
           git commit -q -m "agd $VERSION"
           git push -q "https://x-access-token:$TAP_TOKEN@github.com/Zejnilovic/homebrew-tap.git" HEAD
+      # Pushes the new pin to agd-action and starts its Release workflow, which tags the version and moves v1.
+      # AGD_ACTION_TOKEN: a fine-grained token for Zejnilovic/agd-action with contents and actions write.
+      - name: Release agd-action
+        if: ${{ !inputs.dry_run && env.ACTION_VERSION != '' }}
+        env:
+          ACTION_TOKEN: ${{ secrets.AGD_ACTION_TOKEN }}
+        run: |
+          cd "$RUNNER_TEMP/action"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git commit -q -am "agd $VERSION"
+          git push -q "https://x-access-token:$ACTION_TOKEN@github.com/Zejnilovic/agd-action.git" HEAD:main
+          GH_TOKEN="$ACTION_TOKEN" gh workflow run release.yml --repo Zejnilovic/agd-action --ref main
       # In this job, because GITHUB_TOKEN's events don't start other workflows, and last, because an issue counts as
       # fixed only once the release is out. If it fails, run it again by hand with the notes from the summary: it
       # skips what is already done.
