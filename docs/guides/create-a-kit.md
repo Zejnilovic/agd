@@ -156,4 +156,5 @@ HOME=~/scratch-home agd --home init ~/work/team-home
 - **Every rule changes what an agent does.** Leave out what agents do anyway and what the code already shows.
 - **It holds no project facts.** Stacks, commands and names belong to each project, which adds them in [its own parts](../sources.md#what-projects-may-change).
 - **It tells agents the rules.** A short comment at the top of each file names the source and the parts a project may change, so agents put a project's changes there.
+- **It's tried in each tool it names.** Copilot CLI, for one, fails a subagent whose `model:` is `haiku` or `sonnet`, and gives a subagent `AGENTS.md` only with `include-custom-instructions: true` in its file. Claude Code ignores that line. See [the FAQ](../faq.md#does-agentic-defaults-work-in-copilot-cli).
 - **It holds no secrets**, and a public kit holds no internal names or URLs.

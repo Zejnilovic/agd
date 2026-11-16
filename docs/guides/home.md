@@ -105,11 +105,36 @@ agentic-defaults 0.5.3 is installed, the latest release.
 home     .claude/skills/context-md/SKILL.md: your home folder has a different copy, and your tools may use that one
 ```
 
+## Copilot CLI
+
+Copilot in VS Code reads `~/.claude/skills/` and `~/.claude/agents/`, according to [its docs](https://code.visualstudio.com/docs/copilot/customization/agent-skills), so a home kit reaches it as it is.
+
+Copilot CLI doesn't load `~/.claude/`, according to its changelog (1.0.36) and a test with 1.0.105. Run `copilot skill list`, and if your home kit's skills aren't there, tell it where they are, once per machine:
+
+```text
+$ copilot skill add ~/.claude/skills
+Added custom skill directory: /Users/you/.claude/skills
+Run `copilot skill list` to see the skills it provides.
+```
+
+That adds the full path to `skillDirectories` in `~/.copilot/settings.json`. Before CLI 1.0.107, the setting needs the full path, because older versions don't expand `~` there.
+
+There's no such setting for agents. If your home kit has agents and you have no `~/.copilot/agents/` folder yet, link it:
+
+```bash
+ln -s ~/.claude/agents ~/.copilot/agents
+```
+
+Two things work differently from Claude Code, as of Copilot CLI 1.0.105:
+
+- **A project's skill wins** over a skill of the same name from your home folder.
+- **An agent's `model:` line** must be `inherit` or a Copilot model ID. With `haiku` or `sonnet`, a subagent fails. See [the FAQ](../faq.md#does-agentic-defaults-work-in-copilot-cli).
+
 ## Good to know
 
 - **Read a kit before you install it at home.** The limit keeps a kit inside `.claude/`, but it doesn't make the kit safe: its text reaches every project, and a skill or agent can hold scripts for an agent to run and [hooks of its own](https://code.claude.com/docs/en/hooks). `agd --home status` shows what an update would change before you run it.
 - **Hooks in your settings.** agd never installs a `.claude/settings*` file in your home folder, so to turn on a hook for every project, add it to your own settings.
 - **Older installs.** Files agd already manages in your home folder keep updating, even outside `.claude/`. `agd --home source list` and `.agd.lock` show what you have.
 - **Skill folders.** When you already have a file in a kit's skill folder, agd installs none of that skill, so your copy and the kit's don't mix. `agd --home status` lists each `taken` file. A folder agd already manages part of, from before 0.5.1, keeps updating file by file.
-- **Other tools and moved folders.** `--home` means `$HOME` and nothing else. The rules above are written for Claude Code, so other tools' folders, such as `~/.codex/`, count as outside `.claude/`. agd doesn't follow `CLAUDE_CONFIG_DIR`.
+- **Other tools and moved folders.** `--home` means `$HOME` and nothing else. The rules above are written for Claude Code, so other tools' folders, such as `~/.codex/` and `~/.copilot/`, count as outside `.claude/`. agd doesn't follow `CLAUDE_CONFIG_DIR`.
 - **Git Bash on Windows.** `$HOME` is usually `%USERPROFILE%`, where Claude Code looks, but not always. Check with `echo $HOME`.

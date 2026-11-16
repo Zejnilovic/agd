@@ -15,6 +15,18 @@ Mostly. Cursor reads the folders agentic-defaults installs, but not every line i
 - An agent's `model:` line: Cursor expects `inherit` or one of its model IDs, and doesn't document short names such as `sonnet`. Set the line to `inherit` or a Cursor model ID; it belongs to the project, so updates keep it.
 - An agent's `tools:` line: ignored. Cursor's agents get all of the parent's tools, and only `readonly: true` limits them.
 
+## Does agentic-defaults work in Copilot CLI?
+
+Yes, once you change the agents' `model:` lines. In real sessions with Copilot CLI 1.0.105 on macOS:
+
+- `AGENTS.md`: read. `CLAUDE.md` is read too, and it imports `AGENTS.md`, so the text loads twice. If only Copilot uses the project, list `CLAUDE.md` in `.agd-ignore`.
+- Skills in `.claude/skills/`: read. An agent's `skills:` list preloads them.
+- Agents in `.claude/agents/`: read. An agent of the same name in `.github/agents/<name>.agent.md` wins.
+- An agent's `model:` line: read, but `haiku` and `sonnet` aren't recognized. A subagent with either one fails, and the main conversation does its work or retries on another model. Set the line to `inherit` or a Copilot model ID; it belongs to the project, so updates keep it. [The kit's docs](https://zejnilovic.github.io/agentic-defaults/tools/#model-per-agent) show how.
+- `include-custom-instructions: true`: without this line in its file, a subagent doesn't get `AGENTS.md`. agentic-defaults sets it from 0.5.4.
+- `.github/hooks/`: run, in a folder you trust. `copilot -p` skips hooks without saying so unless the folder is already trusted or you pass `--trust-folder`.
+- `~/.claude/`: not read, according to the changelog (1.0.36), so a home kit may need [one more step](guides/home.md#copilot-cli). Copilot in VS Code does read `~/.claude/skills/` and `~/.claude/agents/`.
+
 ## Does agd work with skills.sh?
 
 Partly. Both use `SKILL.md` files and `.claude/skills/`, but they find, install and update skills differently:

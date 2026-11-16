@@ -6,6 +6,10 @@ Version numbers: **major** when the lock or `packs.txt` format changes and proje
 
 A bullet can end with the issues it touches: `(#12)` means this release fixes #12, `(ref #20)` means a related change that leaves #20 open, and they combine as `(ref #20, ref #11, #12)`. When the release is out, each issue gets a comment, and the fixed ones are closed.
 
+## 0.5.2 (unreleased)
+
+- The FAQ and the [home guide](https://zejnilovic.github.io/agd/guides/home/#copilot-cli) cover Copilot CLI, from real sessions: what it reads from a kit, and how to point it at `~/.claude/` when it doesn't load a home kit.
+
 ## 0.5.1 (2026-11-02)
 
 - `--latest` is for sources that don't tag releases. `agd init --latest`, `agd adopt --latest` and `agd update --latest` take the newest commit on the source's default branch, and record its SHA in `.agd.lock`. With several sources, name the one to move: `agd update --latest team-kit`. A plain `agd update` doesn't follow the branch; `status` and `update` say when it has moved on. `agd check --latest` doesn't require a release tag.
